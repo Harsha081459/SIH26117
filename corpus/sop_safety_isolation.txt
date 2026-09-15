@@ -1,0 +1,15 @@
+MRPL — STANDARD OPERATING PROCEDURE SOP-SAFE-002
+Title: Energy Isolation / Lock-Out Tag-Out (LOTO)
+Effective: 01-Jan-2026 · Owner: HSSE Department · Classification: INTERNAL
+
+1. Before maintenance on any rotating equipment, all energy sources
+   (electrical, hydraulic, stored pressure) must be isolated.
+2. The isolating authority applies a personal lock; the executing
+   technician applies a second lock. Keys remain with the individuals.
+3. Try-start verification is mandatory after isolation.
+4. Isolation register entry required: equipment tag, energy sources,
+   lock numbers, names, date-time.
+5. Removal of isolation only by the persons who applied it, after
+   job-completion sign-off and guard reinstatement check.
+6. Violation of LOTO is a red-category safety event and must be
+   reported to HSSE within 4 hours.

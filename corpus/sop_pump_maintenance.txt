@@ -1,0 +1,27 @@
+MRPL — STANDARD OPERATING PROCEDURE SOP-MECH-041
+Title: Centrifugal Pump P-201 Quarterly Maintenance and Inspection
+Effective: 01-Apr-2026 · Owner: Mechanical Maintenance Section · Classification: INTERNAL
+
+1. PURPOSE
+Ensure continued safe operation of crude-transfer pump P-201 by quarterly
+inspection of bearings, seals, alignment and vibration signature.
+
+2. SCOPE
+Applies to all centrifugal pumps in the crude distillation unit (CDU-2).
+
+3. SAFETY
+- Follow Energy Isolation procedure (LOTO) per SOP-SAFE-002 before any work.
+- Hot-work permit required for any welding within 15 m of the pump bay.
+- Confined-space entry into the sump requires gas test per SOP-SAFE-014.
+
+4. INSPECTION CHECKLIST (quarterly)
+a) Bearing temperature — record at DE and NDE; alert above 75 C.
+b) Vibration — measure at 3 axes; alert above 4.5 mm/s RMS.
+c) Mechanical seal — check leakage; >10 drops/min triggers seal replacement.
+d) Coupling alignment — laser check; tolerance 0.05 mm.
+e) Lube oil — sample for water content and particle count.
+
+5. REPORTING
+Findings recorded in Form MECH-F-12 and filed with the reliability engineer
+within 48 hours. Any red-flag item requires an approval note to the
+Maintenance Manager before the pump is returned to service.

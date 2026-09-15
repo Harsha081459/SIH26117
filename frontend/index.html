@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sovereign AI Workbench — SIH26117 POC</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --fg:#e6edf3; --mut:#8b949e; --grn:#3fb950; --acc:#58a6ff; }
+  * { box-sizing:border-box; font-family:system-ui,Segoe UI,sans-serif; }
+  body { margin:0; background:var(--bg); color:var(--fg); }
+  header { padding:10px 16px; background:var(--panel); display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #30363d; }
+  header b { font-size:15px; }
+  #egress { font-size:13px; padding:4px 12px; border-radius:12px; background:#0d419d22; border:1px solid #30363d; }
+  #egress.zero { color:var(--grn); border-color:var(--grn); }
+  #egress.bad { color:#f85149; border-color:#f85149; }
+  main { display:grid; grid-template-columns:1fr 340px; gap:12px; padding:12px; max-width:1200px; margin:auto; }
+  #chat { display:flex; flex-direction:column; gap:8px; }
+  .msg { background:var(--panel); border:1px solid #30363d; border-radius:8px; padding:10px 12px; white-space:pre-wrap; font-size:14px; }
+  .msg.user { border-left:3px solid var(--acc); }
+  .msg.bot { border-left:3px solid var(--grn); }
+  .route { color:var(--mut); font-size:12px; margin-bottom:4px; }
+  #inputrow { display:flex; gap:8px; }
+  #msg { flex:1; padding:10px; border-radius:8px; border:1px solid #30363d; background:var(--panel); color:var(--fg); }
+  button { padding:10px 16px; border-radius:8px; border:1px solid var(--acc); background:transparent; color:var(--acc); cursor:pointer; }
+  button:disabled { opacity:.5; cursor:wait; }
+  #trace { background:var(--panel); border:1px solid #30363d; border-radius:8px; padding:10px; font-size:12px; max-height:70vh; overflow:auto; }
+  #trace h3 { margin:0 0 8px; font-size:13px; color:var(--mut); text-transform:uppercase; letter-spacing:.5px; }
+  .tstep { border-left:2px solid #30363d; padding:4px 8px; margin-bottom:8px; }
+  .tstep .tool { color:var(--acc); font-family:monospace; }
+  .tstep .res { color:var(--mut); font-family:monospace; font-size:11px; word-break:break-all; }
+  a { color:var(--acc); }
+</style>
+</head>
+<body>
+<header>
+  <b>Sovereign AI Workbench <span style="color:var(--mut);font-weight:400">· SIH26117 POC · air-gapped</span></b>
+  <span id="egress">external calls: …</span>
+</header>
+<main>
+  <div id="chat">
+    <div id="msgs">
+      <div class="msg bot">Air-gapped workbench ready. Try:<br>
+      • "Summarize sop_pump_maintenance.txt and draft an approval note as a docx"<br>
+      • "Write and run a Python script that counts errors in log_sample.txt"<br>
+      • "Read scanned_report.png and list the findings"</div>
+    </div>
+    <div id="inputrow">
+      <input id="msg" placeholder="Describe a task…" autofocus>
+      <button id="send">Send</button>
+    </div>
+  </div>
+  <div id="trace"><h3>Execution trace</h3><div id="steps"></div></div>
+</main>
+<script>
+const msgs = document.getElementById('msgs'), steps = document.getElementById('steps');
+const inp = document.getElementById('msg'), btn = document.getElementById('send');
+
+async function pollEgress() {
+  try {
+    const r = await fetch('/api/egress').then(r=>r.json());
+    const el = document.getElementById('egress');
+    el.textContent = 'external calls: ' + r.external_calls;
+    el.className = r.external_calls === 0 ? 'zero' : 'bad';
+  } catch(e){}
+}
+pollEgress(); setInterval(pollEgress, 5000);
+
+function addMsg(cls, html){ const d=document.createElement('div'); d.className='msg '+cls; d.innerHTML=html; msgs.appendChild(d); msgs.scrollTop=msgs.scrollHeight; }
+
+async function send(){
+  const text = inp.value.trim(); if(!text) return;
+  inp.value=''; btn.disabled=true;
+  addMsg('user', text);
+  const attach = text.match(/[\w.\-]+\.(png|jpg|jpeg|tif|tiff)/i);
+  const r = await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({message:text, attachment: attach?attach[0]:null})}).then(r=>r.json());
+  const route = `<div class="route">task: ${r.task} → model: <b>${r.model}</b> (${r.reason})</div>`;
+  let ans = (r.answer||'').replace(/</g,'&lt;');
+  const fm = (r.answer||'').match(/Deliverable created: ([\w.\-]+)/);
+  if (fm) ans += `<br><br><a href="/api/download/${fm[1]}">⬇ Download ${fm[1]}</a>`;
+  addMsg('bot', route + ans);
+  steps.innerHTML = (r.trace||[]).map(t =>
+    `<div class="tstep"><b>step ${t.step}</b> ${t.type==='tool'?
+      `<span class="tool">${t.tool}()</span><div class="res">${(t.result||'').replace(/</g,'&lt;').slice(0,300)}</div>`:
+      `<span style="color:var(--grn)">final answer</span>`}</div>`).join('');
+  btn.disabled=false;
+}
+btn.onclick = send;
+inp.addEventListener('keydown', e => { if(e.key==='Enter') send(); });
+</script>
+</body>
+</html>

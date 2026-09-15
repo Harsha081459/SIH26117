@@ -1,0 +1,19 @@
+INTERNAL CORRESPONDENCE — PROCUREMENT / VENDOR VALVES
+Ref: MRPL/PROC/2026/1187 · Classification: CONFIDENTIAL
+
+From: S. Rao, Senior Manager (Procurement)
+To: Reliability Engineering
+Date: 28-Aug-2026
+
+Subject: Globe-valve delivery slippage — Batch PO-55214
+
+The vendor (FlowSeal Industries) has informed a 3-week slip on the
+40NB globe-valve batch for the CDU-2 turnaround. Original PO delivery
+was 15-Sep; revised commitment is 06-Oct.
+
+Impact: P-201 seal-replacement work in Q3 maintenance window can
+proceed (spares in stores), but the suction-side valve swap must move
+to the October window. Please confirm revised isolation plan.
+
+Finance note: LD clause 7.2 applies at 0.5%/week capped at 5% of PO
+value (Rs 18.4 lakh). Please advise whether to invoke.

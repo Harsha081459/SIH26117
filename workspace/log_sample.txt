@@ -1,0 +1,12 @@
+2026-09-10 08:12:04 INFO  pump P-201 started, flow 312 m3/h
+2026-09-10 08:14:51 WARN  bearing temp DE 74.8 C near threshold
+2026-09-10 08:15:02 INFO  vibration 3.1 mm/s RMS nominal
+2026-09-10 09:02:33 ERROR seal leakage detected, drip counter 14/min
+2026-09-10 09:02:34 ERROR auto-alert: exceeds 10 drops/min per SOP-MECH-041
+2026-09-10 09:05:10 INFO  operator acknowledged alert
+2026-09-10 09:40:22 INFO  pump isolated, LOTO applied per SOP-SAFE-002
+2026-09-10 10:18:44 INFO  seal replacement started
+2026-09-10 12:31:07 INFO  seal replacement complete
+2026-09-10 12:47:55 ERROR post-restart vibration 5.2 mm/s RMS (limit 4.5)
+2026-09-10 13:05:12 INFO  coupling re-aligned to 0.04 mm
+2026-09-10 13:22:39 INFO  vibration 2.8 mm/s RMS nominal — pump returned to service
