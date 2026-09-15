@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+outputs/
+workspace/_sandbox_run.py
+.venv/
+.DS_Store
