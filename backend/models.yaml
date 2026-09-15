@@ -1,0 +1,13 @@
+# Model registry — adding a new open-weight model = adding a row here.
+# This is the "not locked to one model" requirement from the PS.
+default: qwen2.5:14b-instruct
+models:
+  - id: qwen2.5:14b-instruct
+    tasks: [summarize, draft_document, analyze, plan, general]
+    reason: "strong reasoning + document quality"
+  - id: qwen2.5-coder:7b
+    tasks: [write_code, debug, explain_code]
+    reason: "code-specialized model"
+  - id: qwen2-vl:7b
+    tasks: [image_understanding, ocr_handwriting, drawing_review]
+    reason: "vision-language model"

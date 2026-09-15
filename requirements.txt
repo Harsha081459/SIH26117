@@ -1,0 +1,8 @@
+Ifastapi
+uvicorn
+httpx
+pyyaml
+psutil
+python-docx
+openpyxl
+python-pptx
