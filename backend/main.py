@@ -1,71 +1,201 @@
-"""FastAPI backend for the sovereign on-prem agentic workbench (POC)."""
+"""FastAPI backend for the sovereign on-premise agentic workbench."""
+import json
 import os
+import shutil
+from typing import Optional
+
 import psutil
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import agent
+import audit
 import router as model_router
 from ollama_client import list_models
-from tools import OUT
+from tools import OUT, WORKSPACE, call
 
-app = FastAPI(title="Sovereign AI Workbench — SIH26117 POC")
+app = FastAPI(title="Sovereign AI Workbench - SIH26117")
 
-BOOT_TIME = __import__("time").time()
-LOCAL_NETS = ("127.", "10.", "172.16.", "172.17.", "192.168.", "::1")
+# Anything outside these ranges counts as leaving the premises.
+LOCAL_PREFIXES = ("127.", "10.", "172.16.", "172.17.", "172.18.", "192.168.",
+                  "169.254.", "::1", "fe80:")
+IMAGE_EXT = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp")
 
 
 class Chat(BaseModel):
     message: str
-    attachment: str | None = None
+    attachment: Optional[str] = None
 
 
 @app.post("/api/chat")
 def chat(body: Chat):
-    r = model_router.route(body.message, has_attachment=bool(body.attachment))
-    if body.attachment:
-        from tools import call
-        r["answer"] = call("ocr_doc", {"path": body.attachment})
-        r["trace"] = [{"step": 1, "type": "tool", "tool": "ocr_doc",
-                       "args": {"path": body.attachment}, "result": r["answer"][:500]}]
-        return r
+    has_attach = bool(body.attachment)
+    r = model_router.route(body.message, has_attachment=has_attach)
+
+    # An attached image or PDF is read first, then the question is answered
+    # with that content in hand.
+    if has_attach:
+        name = body.attachment
+        reader = "pdf_read" if name.lower().endswith(".pdf") else "ocr_doc"
+        extracted = call(reader, {"path": name})
+        task = ("The following content was extracted from the attached file '{}':\n\n{}\n\n"
+                "Using only that content, answer the user's request: {}").format(
+                    name, extracted[:6000], body.message)
+        try:
+            out = agent.run(task, r.get("orchestrator") or r["model"], max_steps=6)
+        except Exception as e:
+            return {**r, "answer": extracted, "trace": [
+                {"step": 1, "type": "tool", "tool": reader,
+                 "args": {"path": name}, "result": extracted[:600]}],
+                "files": [], "steps": 1, "secs": 0, "note": str(e)}
+        out["trace"] = [{"step": 0, "type": "tool", "tool": reader,
+                         "args": {"path": name}, "result": extracted[:600]}] + out["trace"]
+        return {**r, **out}
+
     try:
-        out = agent.run(body.message, r["model"])
+        out = agent.run(body.message, r.get("orchestrator") or r["model"])
     except Exception as e:
-        return {**r, "answer": f"ERROR reaching local inference (is Ollama running? `ollama serve`): {e}",
-                "trace": [], "steps": 0, "secs": 0}
+        return {**r,
+                "answer": "Local inference is not reachable. Start the runtime with "
+                          "`ollama serve`, then pull a model. Details: {}".format(e),
+                "trace": [], "files": [], "steps": 0, "secs": 0}
     return {**r, **out}
 
 
+@app.post("/api/chat/stream")
+def chat_stream(body: Chat):
+    """Same as /api/chat but emits each tool call as it happens (SSE).
+
+    Keeps the interface informative while a local model is thinking, and lets a
+    reviewer watch the agent actually take steps.
+    """
+    r = model_router.route(body.message, has_attachment=bool(body.attachment))
+    task = body.message
+    prelude = []
+
+    if body.attachment:
+        name = body.attachment
+        reader = "pdf_read" if name.lower().endswith(".pdf") else "ocr_doc"
+        extracted = call(reader, {"path": name})
+        prelude.append({"step": 0, "type": "step", "tool": reader,
+                        "args": {"path": name}, "result": extracted[:600]})
+        task = ("The following content was extracted from the attached file '{}':\n\n{}\n\n"
+                "Using only that content, answer the user's request: {}").format(
+                    name, extracted[:6000], body.message)
+
+    def events():
+        yield "data: " + json.dumps({"type": "route", **r}) + "\n\n"
+        for ev in prelude:
+            yield "data: " + json.dumps(ev) + "\n\n"
+        try:
+            for ev in agent.iter_run(task, r.get("orchestrator") or r["model"]):
+                if ev.get("type") == "final" and prelude:
+                    ev["trace"] = [dict(p, type="tool") for p in prelude] + ev["trace"]
+                yield "data: " + json.dumps(ev, default=str) + "\n\n"
+        except Exception as e:
+            yield "data: " + json.dumps({
+                "type": "final", "answer": "Local inference is not reachable. Start it "
+                "with `ollama serve` and pull a model. Details: {}".format(e),
+                "trace": [], "files": [], "steps": 0, "secs": 0}) + "\n\n"
+        yield "data: " + json.dumps({"type": "done"}) + "\n\n"
+
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/upload")
+async def upload(file: UploadFile = File(...)):
+    safe = os.path.basename(file.filename or "upload.bin").replace(" ", "_")
+    dest = WORKSPACE / safe
+    with dest.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+    audit.record("tool_call", tool="upload", args={"name": safe},
+                 dest="local-process", ok=True)
+    kind = ("image" if safe.lower().endswith(IMAGE_EXT)
+            else "pdf" if safe.lower().endswith(".pdf") else "file")
+    return {"saved": safe, "kind": kind, "bytes": dest.stat().st_size}
+
+
+def _is_external(ip):
+    return not any(ip.startswith(p) for p in LOCAL_PREFIXES)
+
+
 @app.get("/api/egress")
-def egress():
-    """Outbound connections from THIS process to non-local addresses — must stay 0.
-    On the dedicated air-gapped box, monitor the whole machine instead."""
-    me = psutil.Process(os.getpid())
-    pids = {me.pid} | {c.pid for c in me.children(recursive=True)}
+def egress(scope: str = "process"):
+    """Outbound connections to addresses outside the premises.
+
+    scope=process : this backend and its children (works on a shared machine)
+    scope=machine : every process on the box (use on the dedicated deployment)
+    """
+    pids = None
+    if scope == "process":
+        me = psutil.Process(os.getpid())
+        pids = {me.pid} | {c.pid for c in me.children(recursive=True)}
     hits = []
     try:
         for c in psutil.net_connections(kind="inet"):
-            if c.pid in pids and c.status == "ESTABLISHED" and c.raddr:
-                ip = c.raddr.ip
-                if not ip.startswith(LOCAL_NETS):
-                    hits.append(f"{ip}:{c.raddr.port}")
-    except Exception as e:
-        return {"external_calls": -1, "note": str(e)}
-    return {"external_calls": len(hits), "detail": hits[:20]}
+            if pids is not None and c.pid not in pids:
+                continue
+            if c.status == "ESTABLISHED" and c.raddr and _is_external(c.raddr.ip):
+                hits.append("{}:{}".format(c.raddr.ip, c.raddr.port))
+    except (psutil.AccessDenied, PermissionError) as e:
+        return {"external_calls": -1, "scope": scope, "note": "permission denied: {}".format(e)}
+    return {"external_calls": len(hits), "scope": scope, "detail": sorted(set(hits))[:20]}
+
+
+@app.post("/api/egress/probe")
+def egress_probe():
+    """Actively try to leave the machine and report the result.
+
+    The passive counter shows that nothing went out; this shows that nothing
+    *can*. Returns the per-target outcome plus a pass/fail verdict.
+    """
+    out = call("egress_probe", {})
+    denied = "ALLOWED" not in out
+    rows = []
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith(("DENIED", "ALLOWED")):
+            state, _, detail = line.partition(" ")
+            rows.append({"state": state, "detail": detail.strip()})
+    return {"denied": denied, "rows": rows, "raw": out,
+            "verdict": out.strip().splitlines()[-1] if out.strip() else ""}
+
+
+@app.get("/api/audit")
+def audit_log(n: int = 50):
+    return {"summary": audit.summary(), "recent": audit.tail(n)}
 
 
 @app.get("/api/models")
 def models():
-    return {"loaded": list_models(), "registry": model_router._CFG}
+    loaded = list_models()
+    reg = model_router.registry()
+    declared = [m["id"] for m in reg["models"]]
+    return {"runtime_models": loaded, "registry": reg,
+            "missing": [m for m in declared if m not in loaded],
+            "runtime_up": bool(loaded)}
+
+
+@app.get("/api/health")
+def health():
+    loaded = list_models()
+    return {"status": "ok" if loaded else "runtime_down",
+            "models_loaded": len(loaded),
+            "workspace_files": sorted(p.name for p in WORKSPACE.iterdir()
+                                      if p.is_file() and not p.name.startswith("_")),
+            "outputs": sorted(p.name for p in OUT.iterdir() if p.is_file())}
 
 
 @app.get("/api/download/{name}")
 def download(name: str):
-    p = OUT / name
-    return FileResponse(p) if p.exists() else {"error": "not found"}
+    p = OUT / os.path.basename(name)
+    if not p.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(p, filename=p.name)
 
 
 FRONTEND = os.path.join(os.path.dirname(__file__), "..", "frontend")

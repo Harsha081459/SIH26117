@@ -1,13 +1,29 @@
-# Model registry — adding a new open-weight model = adding a row here.
-# This is the "not locked to one model" requirement from the PS.
-default: qwen2.5:14b-instruct
+# Model registry.
+#
+# Adding a newly released open-weight model means adding a block here -- no
+# code changes -- which is what the problem statement asks for ("new open
+# weight models should be addable later without redesigning the system").
+#
+# If a listed model is not present in the local runtime, router._resolve()
+# substitutes the closest model that is loaded. That is what allows the same
+# deployment to run on a 16 GB workstation and on a larger GPU server.
+
+default: qwen2.5:7b-instruct
+
 models:
-  - id: qwen2.5:14b-instruct
+  - id: qwen2.5:7b-instruct
     tasks: [summarize, draft_document, analyze, plan, general]
-    reason: "strong reasoning + document quality"
+    reason: "general reasoning and document drafting"
+
   - id: qwen2.5-coder:7b
     tasks: [write_code, debug, explain_code]
-    reason: "code-specialized model"
-  - id: qwen2-vl:7b
+    reason: "code-specialised model"
+
+  - id: qwen2.5vl:3b
     tasks: [image_understanding, ocr_handwriting, drawing_review]
-    reason: "vision-language model"
+    reason: "vision-language model for scans, drawings and handwriting"
+
+  # Larger tier -- used automatically when present on a bigger GPU server.
+  - id: qwen2.5:14b-instruct
+    tasks: [long_document, board_note]
+    reason: "higher-quality drafting when VRAM allows"

@@ -1,4 +1,4 @@
-Ifastapi
+fastapi
 uvicorn
 httpx
 pyyaml
@@ -6,3 +6,5 @@ psutil
 python-docx
 openpyxl
 python-pptx
+pymupdf
+python-multipart
