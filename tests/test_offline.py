@@ -190,6 +190,37 @@ def test_a_list_of_titles_makes_one_slide_each():
     assert mixed[1] == ("Next", ["c", "d"])
 
 
+def test_compose_deck_enforces_the_requested_slide_count():
+    """Authoring happens in its own pass, so the count must be honoured."""
+    import ollama_client
+
+    calls = {"n": 0}
+
+    def fake_generate(model, prompt, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:          # deliberately short first draft
+            return "## Alpha\n- one\n- two\n\n## Beta\n- three"
+        return "\n\n".join("## Topic {}\n- point a\n- point b".format(i)
+                           for i in range(3, 11))
+
+    real = ollama_client.generate
+    ollama_client.generate = fake_generate
+    try:
+        res = tools.compose_deck("Ten Slides", topic="safety", slides=10)
+    finally:
+        ollama_client.generate = real
+
+    assert res.startswith("FILE:"), res
+    assert "10 slides" in res, res
+    assert calls["n"] == 2, "should have asked again for the missing slides"
+
+    from pptx import Presentation
+    prs = Presentation(str(tools.OUT / _filename(res)))
+    titles = [s.shapes.title.text for s in prs.slides]
+    assert len(titles) == 10
+    assert not any(t.strip().lower().startswith("slide ") for t in titles), titles
+
+
 def test_success_is_not_claimed_when_no_file_exists():
     """A failed make_* must never be reported as a created document."""
     import agent as agent_mod

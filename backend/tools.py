@@ -449,6 +449,87 @@ def _parse_slides(slides):
     return [(t, b) for t, b in out if t or b]
 
 
+def _general_model():
+    """The reasoning model, resolved against what the runtime actually holds."""
+    import router
+    model, _ = router.pick_model("general")
+    resolved, _ = router._resolve(model)
+    return resolved
+
+
+DECK_PROMPT = """Write the content for a {n}-slide presentation titled "{title}".
+{topic_line}{source_block}
+Output format -- follow it exactly, nothing else:
+
+## First slide title
+- first bullet
+- second bullet
+- third bullet
+
+## Second slide title
+- first bullet
+- second bullet
+
+Rules:
+- Produce exactly {n} slides, each introduced by a line starting with "## ".
+- Give every slide a real, specific title. Never write "Slide 1" as a title.
+- 2 to 4 bullets per slide, each a complete, informative statement.
+- Plain text only. No preamble, no closing commentary, no code fences.
+"""
+
+
+def compose_deck(title, topic="", slides=8, source=""):
+    """Author a multi-slide deck, then build the file.
+
+    Writing a whole deck inside a JSON tool argument makes a small model terse
+    and prone to putting text in the wrong field -- it was returning three
+    slides for a request for ten, titled "Slide 1", "Slide 2". Generating the
+    content in its own unconstrained pass and parsing the result deterministically
+    removes that pressure, and lets the requested slide count be enforced.
+    """
+    from ollama_client import generate
+
+    try:
+        want = max(1, min(int(slides), 20))
+    except (TypeError, ValueError):
+        want = 8
+
+    model = _general_model()
+    src = str(source or "").strip()
+    prompt = DECK_PROMPT.format(
+        n=want, title=title,
+        topic_line=("Subject: {}\n".format(topic) if topic else ""),
+        source_block=("\nBase the content only on this material:\n---\n{}\n---\n"
+                      .format(src[:6000]) if src else ""))
+
+    try:
+        drafted = generate(model, prompt, timeout=300)
+    except Exception as e:
+        return "ERROR: could not draft the deck locally: {}".format(e)
+
+    parsed = _parse_slides(drafted)
+
+    # A short draft gets one more attempt for the remainder rather than
+    # silently handing back fewer slides than were asked for.
+    if len(parsed) < want:
+        try:
+            more = generate(model, prompt + (
+                "\nYou previously produced only {} slides. Write the remaining {}, "
+                "continuing the same subject and not repeating these titles: {}"
+                .format(len(parsed), want - len(parsed),
+                        "; ".join(t for t, _ in parsed))), timeout=300)
+            parsed += [s for s in _parse_slides(more)
+                       if s[0] not in {t for t, _ in parsed}]
+        except Exception:
+            pass
+
+    if not parsed:
+        return "ERROR: the draft came back empty; try again with a clearer subject."
+
+    return make_pptx(title, ["{} | {}".format(t, "; ".join(b)) if b else t
+                             for t, b in parsed[:want]])
+
+
 def make_pptx(title, slides):
     """Produce a slide deck.
 
@@ -512,7 +593,8 @@ TOOLS = {
     "egress_probe": {"fn": egress_probe, "args": [],                "desc": "attempt outbound network connections and report that they are denied"},
     "make_docx":  {"fn": make_docx,  "args": ["title", "body"],     "desc": "produce a Word deliverable; optional findings, recommendation, reference for an approval note"},
     "make_xlsx":  {"fn": make_xlsx,  "args": ["title", "csv_rows"], "desc": "produce an Excel deliverable"},
-    "make_pptx":  {"fn": make_pptx,  "args": ["title", "slides"],   "desc": "produce a PowerPoint deliverable. ONE LINE PER SLIDE, 'Slide title | bullet; bullet'. A presentation needs several lines, so use a newline between slides"},
+    "compose_deck": {"fn": compose_deck, "args": ["title", "topic", "slides"], "desc": "USE THIS FOR ANY PRESENTATION. Writes a full multi-slide deck and saves the .pptx. slides = how many slides are wanted; pass source text if the deck must be based on a document"},
+    "make_pptx":  {"fn": make_pptx,  "args": ["title", "slides"],   "desc": "low-level deck builder when you already have the exact slide text: one line per slide, 'Slide title | bullet; bullet'. For a presentation from a topic use compose_deck instead"},
 }
 
 TOOL_SPEC = "\n".join("- {}({}): {}".format(name, ", ".join(t["args"]), t["desc"])
