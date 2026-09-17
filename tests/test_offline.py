@@ -78,12 +78,17 @@ def test_kb_search_finds_sop():
     assert "sop" in out.lower()
 
 
+def _filename(result):
+    """FILE:name.ext or FILE:name.ext (n slides) -> name.ext"""
+    assert result.startswith("FILE:"), result
+    return result[5:].split(" (")[0].strip()
+
+
 def test_deliverables_are_real_files():
     for res in (tools.make_docx("T1", "body text"),
                 tools.make_xlsx("T2", "a,b\n1,2"),
                 tools.make_pptx("T3", "Slide | one; two")):
-        assert res.startswith("FILE:")
-        assert (tools.OUT / res[5:]).stat().st_size > 0
+        assert (tools.OUT / _filename(res)).stat().st_size > 0
 
 
 def test_approval_note_has_structured_sections():
@@ -146,6 +151,73 @@ def test_make_xlsx_accepts_text_or_rows():
     for payload in ("a,b\n1,2", [["a", "b"], [1, 2]], ["a,b", "1,2"]):
         res = tools.make_xlsx("Flexible Sheet", payload)
         assert res.startswith("FILE:"), payload
+
+
+def test_pptx_accepts_markdown_and_refuses_empty():
+    """A deck built from nothing looks like success but is worthless."""
+    for empty in ("", "   \n\n", None, []):
+        assert "ERROR" in tools.make_pptx("Empty Deck", empty), repr(empty)
+
+    md = ("## Findings\n- leakage 14 drops/min\n- vibration 5.2 mm/s\n"
+          "## Recommendation\n- return to service after re-check")
+    res = tools.make_pptx("From Markdown", md)
+    assert res.startswith("FILE:")
+    assert "2 slides" in res
+
+    res2 = tools.make_pptx("Pipe Form", "Findings | a; b\nActions | c")
+    assert "2 slides" in res2
+
+    slides = tools._parse_slides(md)
+    assert [t for t, _ in slides] == ["Findings", "Recommendation"]
+    assert slides[0][1] == ["leakage 14 drops/min", "vibration 5.2 mm/s"]
+
+
+def test_file_result_yields_clean_filename():
+    """FILE:name.pptx (3 slides) must not become part of the download name."""
+    import agent as agent_mod
+
+    replies = iter([
+        '{"action":"tool","tool":"make_pptx","args":{"title":"D","slides":"## A\\n- x"}}',
+        '{"action":"final","answer":"done"}',
+    ])
+    real = agent_mod.generate
+    agent_mod.generate = lambda *a, **k: next(replies)
+    try:
+        out = agent_mod.run("build a deck", "fake", max_steps=4)
+    finally:
+        agent_mod.generate = real
+    assert out["files"], out
+    assert out["files"][0].endswith(".pptx")
+    assert "(" not in out["files"][0]
+
+
+def test_same_tool_spam_is_stopped():
+    """Repeated calls with slightly different args must be cut off."""
+    import agent as agent_mod
+
+    n = {"i": 0}
+
+    def fake(*a, **k):
+        n["i"] += 1
+        return ('{"action":"tool","tool":"kb_search","args":{"query":"q%d"}}' % n["i"]
+                if n["i"] <= 8 else '{"action":"final","answer":"stop"}')
+
+    real_gen, real_call = agent_mod.generate, agent_mod.call
+    executed = {"n": 0}
+
+    def counting(name, args):
+        executed["n"] += 1
+        return "result"
+
+    agent_mod.generate, agent_mod.call = fake, counting
+    try:
+        out = agent_mod.run("spam", "fake", max_steps=9)
+    finally:
+        agent_mod.generate, agent_mod.call = real_gen, real_call
+
+    assert executed["n"] <= 3, executed
+    assert any("has now been called" in s.get("result", "")
+               for s in out["trace"] if s["type"] == "tool")
 
 
 def test_egress_probe_reports_a_verdict():

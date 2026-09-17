@@ -39,18 +39,32 @@ Your 1st reply: {{"action": "tool", "tool": "run_python", "args": {{"code": "pri
 (tool returns: 3)
 Your 2nd reply: {{"action": "final", "answer": "log_sample.txt contains 3 ERROR lines."}}
 
+Grounding -- read this before choosing any tool
+- Do NOT call ocr_doc, pdf_read, fs_read or sheet_read unless the user attached
+  that file or named it in their request. Opening an unrelated document pulls
+  confidential material into a task it has nothing to do with. This is the single
+  most important rule here.
+- If the user's request names no file and needs none, do not go looking for one.
+- If the request does need source material and you were given none, say so with the
+  "final" action and state what you would need. That is a correct answer.
+- Never let content from one document appear in a deliverable about something else.
+
 Rules
 - Use the results you have already been given. If a tool has shown you the numbers
   or text you need, work from those values -- do not re-read the same file.
 - calculate takes literal numbers only, e.g. "(2*18400 + 5*3200) * 1.18". Substitute
   the actual values you have seen. It cannot read files or run code.
-- run_python is for counting, parsing or processing a file you have not read yet.
-  Write ordinary multi-line Python and print the result.
+- run_python is for counting, parsing or processing a file. Never use it merely to
+  print text you already wrote -- that accomplishes nothing.
+- Keep the final answer short: state what you did and where the result is. Do not
+  paste the whole document back to the user.
 - kb_search searches internal SOPs, manuals and correspondence.
 - ocr_doc reads images/scans/drawings; pdf_read reads PDFs; sheet_read reads .xlsx.
-- Call fs_list if you do not know which files exist.
-- If the user wants a document, note, report, spreadsheet or deck, finish by calling
-  make_docx / make_xlsx / make_pptx so a real file is produced.
+- Use fs_list only to confirm the name of a file the user referred to, never to go
+  looking for something to write about.
+- If the user wants a document, note, report, spreadsheet or deck AND you have the
+  source material for it, finish by calling make_docx / make_xlsx / make_pptx so a
+  real file is produced. Do not produce a file out of unrelated content.
 - Never repeat a tool call that already succeeded; use the result you were given.
 - After you have what you need, reply with the "final" action.
 - This is an Indian refinery: amounts are in rupees (Rs / INR), never dollars.
@@ -163,7 +177,7 @@ def iter_run(task, model, max_steps=MAX_STEPS):
     local model thinks.
     """
     trace, scratch, files = [], "", []
-    seen = {}
+    seen, tool_uses = {}, {}
     t0 = time.time()
     audit.record("session", event="task_start", model=model, task=task[:300])
 
@@ -212,11 +226,19 @@ def iter_run(task, model, max_steps=MAX_STEPS):
         # instead of executing again.
         key = (tool, json.dumps(args, sort_keys=True, default=str))
         seen[key] = seen.get(key, 0) + 1
+        tool_uses[tool] = tool_uses.get(tool, 0) + 1
+
         if seen[key] > 1:
             result = ("ERROR: {}() was already called with these exact arguments and "
                       "returned the result above. Do not repeat it. Either use that "
                       "result to continue, try a different tool, or finish with "
                       '{{"action": "final", ...}}.'.format(tool))
+        elif tool_uses[tool] > 3:
+            # Same tool, slightly different arguments, over and over: the model is
+            # iterating on wording rather than making progress.
+            result = ("ERROR: {}() has now been called {} times. Stop calling it and "
+                      "finish with {{\"action\": \"final\", \"answer\": \"...\"}} using "
+                      "what you already have.".format(tool, tool_uses[tool]))
         else:
             result = call(tool, args)
 
@@ -226,7 +248,8 @@ def iter_run(task, model, max_steps=MAX_STEPS):
         yield dict(entry, type="step")
 
         if result.startswith("FILE:"):
-            files.append(result[5:])
+            # "FILE:name.pptx (3 slides)" -> "name.pptx"
+            files.append(result[5:].split(" (")[0].strip())
         scratch += "\n[step {}] {}({}) -> {}\n".format(
             step, tool, json.dumps(args)[:300], result[:1500])
 

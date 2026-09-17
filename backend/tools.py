@@ -398,22 +398,69 @@ def make_xlsx(title, csv_rows):
     return "FILE:{}".format(out.name)
 
 
-def make_pptx(title: str, slides: str) -> str:
-    """slides: one slide per line 'Slide Title | bullet; bullet; bullet'."""
-    from pptx import Presentation
-    prs = Presentation()
-    for line in slides.strip().splitlines():
-        if not line.strip():
+def _parse_slides(slides):
+    """Turn a slide specification into [(title, [bullets])].
+
+    The documented form is one slide per line, 'Title | bullet; bullet'. Models
+    also hand over markdown, so '#' headings become slide titles and '-' lines
+    become bullets. Returning a structure lets the caller refuse empty input
+    rather than silently writing a meaningless deck.
+    """
+    text = ("\n".join(str(s) for s in slides)
+            if isinstance(slides, (list, tuple)) else str(slides or ""))
+
+    out = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
             continue
-        t, _, bullets = line.partition("|")
-        s = prs.slides.add_slide(prs.slide_layouts[1])
-        s.shapes.title.text = t.strip()
-        for b in bullets.split(";"):
-            if b.strip():
-                s.placeholders[1].text_frame.add_paragraph().text = b.strip()
-    out = OUT / f"{_safe_name(title)}.pptx"
+        if "|" in line:
+            head, _, rest = line.partition("|")
+            bullets = [b.strip(" -*") for b in rest.split(";") if b.strip(" -*")]
+            out.append([head.strip(" #*"), bullets])
+        elif line.startswith("#"):
+            out.append([line.lstrip("# ").strip(), []])
+        else:
+            bullet = line.lstrip("-*+0123456789.) ").strip()
+            if not out:
+                out.append(["", []])
+            if bullet:
+                out[-1][1].append(bullet)
+    return [(t, b) for t, b in out if t or b]
+
+
+def make_pptx(title, slides):
+    """Produce a slide deck.
+
+    Accepts the documented 'Title | bullet; bullet' form as well as markdown.
+    Empty input is refused rather than written out: a deck with nothing in it is
+    worse than an error, because it looks like success.
+    """
+    from pptx import Presentation
+    from pptx.util import Pt
+
+    parsed = _parse_slides(slides)
+    if not parsed:
+        return ("ERROR: no slide content supplied. Pass one slide per line as "
+                "'Slide title | first bullet; second bullet', or markdown using "
+                "'## Heading' and '- bullet' lines.")
+
+    prs = Presentation()
+    for idx, (stitle, bullets) in enumerate(parsed):
+        layout = prs.slide_layouts[1] if bullets else prs.slide_layouts[5]
+        s = prs.slides.add_slide(layout)
+        s.shapes.title.text = stitle or (title if idx == 0 else "")
+        if bullets and len(s.placeholders) > 1:
+            tf = s.placeholders[1].text_frame
+            tf.text = bullets[0]
+            for b in bullets[1:]:
+                p = tf.add_paragraph()
+                p.text = b
+                p.font.size = Pt(18)
+
+    out = OUT / "{}.pptx".format(_safe_name(title))
     prs.save(out)
-    return f"FILE:{out.name}"
+    return "FILE:{} ({} slides)".format(out.name, len(parsed))
 
 
 def sheet_read(path: str) -> str:
@@ -445,7 +492,7 @@ TOOLS = {
     "egress_probe": {"fn": egress_probe, "args": [],                "desc": "attempt outbound network connections and report that they are denied"},
     "make_docx":  {"fn": make_docx,  "args": ["title", "body"],     "desc": "produce a Word deliverable; optional findings, recommendation, reference for an approval note"},
     "make_xlsx":  {"fn": make_xlsx,  "args": ["title", "csv_rows"], "desc": "produce an Excel deliverable"},
-    "make_pptx":  {"fn": make_pptx,  "args": ["title", "slides"],   "desc": "produce a PowerPoint deliverable ('Title | bullet; bullet' per line)"},
+    "make_pptx":  {"fn": make_pptx,  "args": ["title", "slides"],   "desc": "produce a PowerPoint deliverable. ONE LINE PER SLIDE, 'Slide title | bullet; bullet'. A presentation needs several lines, so use a newline between slides"},
 }
 
 TOOL_SPEC = "\n".join("- {}({}): {}".format(name, ", ".join(t["args"]), t["desc"])
