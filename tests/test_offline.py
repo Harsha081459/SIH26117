@@ -172,6 +172,56 @@ def test_pptx_accepts_markdown_and_refuses_empty():
     assert slides[0][1] == ["leakage 14 drops/min", "vibration 5.2 mm/s"]
 
 
+def test_a_list_of_titles_makes_one_slide_each():
+    """"Give me 10 slides" produces a list; it must not collapse to one slide."""
+    titles = ["Intro", "Crude Types", "Refining", "Safety", "Maintenance",
+              "Efficiency", "Environment", "Technology", "Quality", "Future"]
+    res = tools.make_pptx("Ten Slide Deck", titles)
+    assert "10 slides" in res, res
+
+    parsed = tools._parse_slides(titles)
+    assert len(parsed) == 10
+    assert [t for t, _ in parsed] == titles
+
+    # entries may carry their own bullets, and dicts are accepted too
+    mixed = tools._parse_slides(["Findings | a; b", {"title": "Next",
+                                                     "bullets": ["c", "d"]}])
+    assert mixed[0] == ("Findings", ["a", "b"])
+    assert mixed[1] == ("Next", ["c", "d"])
+
+
+def test_success_is_not_claimed_when_no_file_exists():
+    """A failed make_* must never be reported as a created document."""
+    import agent as agent_mod
+
+    replies = iter([
+        '{"action":"tool","tool":"make_pptx","args":{"title":"D","slides":""}}',
+        '{"action":"final","answer":"The presentation D.pptx has been created. '
+        'Please review the presentation."}',
+    ])
+    real = agent_mod.generate
+    agent_mod.generate = lambda *a, **k: next(replies)
+    try:
+        out = agent_mod.run("build a deck", "fake", max_steps=4)
+    finally:
+        agent_mod.generate = real
+
+    assert out["files"] == [], out["files"]
+    assert "No file was produced" in out["answer"], out["answer"]
+
+    # A genuine success must be left untouched.
+    replies2 = iter([
+        '{"action":"tool","tool":"make_pptx","args":{"title":"E","slides":"A | x"}}',
+        '{"action":"final","answer":"E.pptx has been created."}',
+    ])
+    agent_mod.generate = lambda *a, **k: next(replies2)
+    try:
+        ok = agent_mod.run("build a deck", "fake", max_steps=4)
+    finally:
+        agent_mod.generate = real
+    assert ok["files"] and "No file was produced" not in ok["answer"]
+
+
 def test_file_result_yields_clean_filename():
     """FILE:name.pptx (3 slides) must not become part of the download name."""
     import agent as agent_mod

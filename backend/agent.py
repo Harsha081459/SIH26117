@@ -10,6 +10,7 @@ reviewer can see which model ran, which tools fired and with what arguments.
 """
 import ast
 import json
+import re
 import time
 
 import audit
@@ -177,7 +178,8 @@ def iter_run(task, model, max_steps=MAX_STEPS):
     local model thinks.
     """
     trace, scratch, files = [], "", []
-    seen, tool_uses = {}, {}
+    seen, tool_uses, failed = {}, {}, {}
+    attempted_deliverable = False
     t0 = time.time()
     audit.record("session", event="task_start", model=model, task=task[:300])
 
@@ -207,13 +209,13 @@ def iter_run(task, model, max_steps=MAX_STEPS):
             # user still gets an answer instead of an error.
             text = raw.strip() or "The local model did not return a usable response."
             trace.append({"step": step, "type": "final", "text": text[:4000]})
-            yield _final_event(text, trace, files, step, t0)
+            yield _final_event(text, trace, files, step, t0, attempted_deliverable)
             return
 
         if act["action"] == "final":
             answer = str(act.get("answer", "")).strip()
             trace.append({"step": step, "type": "final", "text": answer})
-            yield _final_event(answer, trace, files, step, t0)
+            yield _final_event(answer, trace, files, step, t0, attempted_deliverable)
             return
 
         tool = act.get("tool", "")
@@ -229,10 +231,19 @@ def iter_run(task, model, max_steps=MAX_STEPS):
         tool_uses[tool] = tool_uses.get(tool, 0) + 1
 
         if seen[key] > 1:
-            result = ("ERROR: {}() was already called with these exact arguments and "
-                      "returned the result above. Do not repeat it. Either use that "
-                      "result to continue, try a different tool, or finish with "
-                      '{{"action": "final", ...}}.'.format(tool))
+            if failed.get(key):
+                # It failed last time; repeating it unchanged cannot help, so say
+                # what to change rather than just refusing.
+                result = ("ERROR: {}() already failed with these exact arguments: {} "
+                          "Repeating it will fail again -- change the arguments to fix "
+                          "the cause, or finish with "
+                          '{{"action": "final", ...}} explaining that no file was '
+                          "produced.".format(tool, failed[key][:200]))
+            else:
+                result = ("ERROR: {}() was already called with these exact arguments "
+                          "and returned the result above. Do not repeat it. Either use "
+                          "that result to continue, try a different tool, or finish "
+                          'with {{"action": "final", ...}}.'.format(tool))
         elif tool_uses[tool] > 3:
             # Same tool, slightly different arguments, over and over: the model is
             # iterating on wording rather than making progress.
@@ -241,12 +252,16 @@ def iter_run(task, model, max_steps=MAX_STEPS):
                       "what you already have.".format(tool, tool_uses[tool]))
         else:
             result = call(tool, args)
+            if result.startswith("ERROR"):
+                failed[key] = result
 
         entry = {"step": step, "type": "tool", "tool": tool, "args": args,
                  "result": result[:600]}
         trace.append(entry)
         yield dict(entry, type="step")
 
+        if tool.startswith("make_"):
+            attempted_deliverable = True
         if result.startswith("FILE:"):
             # "FILE:name.pptx (3 slides)" -> "name.pptx"
             files.append(result[5:].split(" (")[0].strip())
@@ -262,7 +277,7 @@ def iter_run(task, model, max_steps=MAX_STEPS):
     except Exception:
         answer = "Reached the step limit. Work completed so far is in the trace."
     trace.append({"step": step + 1, "type": "final", "text": answer.strip()})
-    yield _final_event(answer.strip(), trace, files, step + 1, t0)
+    yield _final_event(answer.strip(), trace, files, step + 1, t0, attempted_deliverable)
 
 
 def run(task, model, max_steps=MAX_STEPS):
@@ -276,8 +291,28 @@ def run(task, model, max_steps=MAX_STEPS):
     return {k: v for k, v in last.items() if k != "type"}
 
 
-def _final_event(answer, trace, files, steps, t0):
+CLAIMS_A_FILE = re.compile(
+    r"(has been|was|is) (created|generated|produced|saved|drafted|written)"
+    r"|here is your|please (review|find) the"
+    r"|[.](docx|xlsx|pptx)", re.I)
+
+
+def _final_event(answer, trace, files, steps, t0, attempted_deliverable=False):
+    """Close out a run, correcting the answer if it claims a file that does not exist.
+
+    A model whose make_* call failed will still cheerfully report success. The
+    user then hunts for a download that was never produced, which is worse than
+    a plain error. Whether a file exists is a fact we hold, so the claim is
+    checked here rather than trusted.
+    """
+    if not files and attempted_deliverable and CLAIMS_A_FILE.search(answer or ""):
+        answer = ("No file was produced -- generating the document failed, so there "
+                  "is nothing to download. The tool errors are in the steps above.\n\n"
+                  "The model's original reply, which wrongly claimed success, was:\n"
+                  + (answer or "").strip())
+
     secs = round(time.time() - t0, 1)
-    audit.record("session", event="task_end", steps=steps, secs=secs, files=files)
+    audit.record("session", event="task_end", steps=steps, secs=secs, files=files,
+                 deliverable_attempted=attempted_deliverable)
     return {"type": "final", "answer": answer, "trace": trace, "files": files,
             "steps": steps, "secs": secs}

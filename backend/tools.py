@@ -398,17 +398,37 @@ def make_xlsx(title, csv_rows):
     return "FILE:{}".format(out.name)
 
 
+def _slide_from_item(item):
+    """One list entry -> (title, [bullets]). 'Title | a; b' is honoured."""
+    if isinstance(item, dict):
+        title = str(item.get("title") or item.get("heading") or "").strip()
+        raw = item.get("bullets") or item.get("points") or item.get("content") or []
+        if isinstance(raw, str):
+            raw = [b for b in raw.replace("\n", ";").split(";")]
+        return title, [str(b).strip(" -*") for b in raw if str(b).strip(" -*")]
+    text = str(item).strip()
+    if "|" in text:
+        head, _, rest = text.partition("|")
+        return head.strip(" #*"), [b.strip(" -*") for b in rest.split(";")
+                                   if b.strip(" -*")]
+    return text.lstrip("# ").strip(), []
+
+
 def _parse_slides(slides):
     """Turn a slide specification into [(title, [bullets])].
 
-    The documented form is one slide per line, 'Title | bullet; bullet'. Models
-    also hand over markdown, so '#' headings become slide titles and '-' lines
-    become bullets. Returning a structure lets the caller refuse empty input
-    rather than silently writing a meaningless deck.
+    Three shapes are accepted because models supply all three:
+      * a list -- one entry per slide, which is what "give me 10 slides"
+        naturally produces. Joining the list into text instead would collapse
+        ten slide titles into ten bullets on a single slide.
+      * one slide per line, 'Title | bullet; bullet'
+      * markdown, where '#' headings start slides and '-' lines are bullets
     """
-    text = ("\n".join(str(s) for s in slides)
-            if isinstance(slides, (list, tuple)) else str(slides or ""))
+    if isinstance(slides, (list, tuple)):
+        made = [_slide_from_item(i) for i in slides if str(i).strip()]
+        return [(t, b) for t, b in made if t or b]
 
+    text = str(slides or "")
     out = []
     for raw in text.splitlines():
         line = raw.strip()
