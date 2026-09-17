@@ -2,91 +2,276 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Sovereign AI Workbench — SIH26117 POC</title>
+<title>Sovereign AI Workbench - SIH26117</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-  :root { --bg:#0d1117; --panel:#161b22; --fg:#e6edf3; --mut:#8b949e; --grn:#3fb950; --acc:#58a6ff; }
-  * { box-sizing:border-box; font-family:system-ui,Segoe UI,sans-serif; }
-  body { margin:0; background:var(--bg); color:var(--fg); }
-  header { padding:10px 16px; background:var(--panel); display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #30363d; }
-  header b { font-size:15px; }
-  #egress { font-size:13px; padding:4px 12px; border-radius:12px; background:#0d419d22; border:1px solid #30363d; }
-  #egress.zero { color:var(--grn); border-color:var(--grn); }
-  #egress.bad { color:#f85149; border-color:#f85149; }
-  main { display:grid; grid-template-columns:1fr 340px; gap:12px; padding:12px; max-width:1200px; margin:auto; }
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3;
+          --mut:#8b949e; --grn:#3fb950; --acc:#58a6ff; --red:#f85149; --amb:#d29922; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.5 system-ui,"Segoe UI",sans-serif; }
+  header { padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line);
+           display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+  .brand b { font-size:15px; }
+  .brand span { color:var(--mut); font-weight:400; }
+  .pills { display:flex; gap:8px; align-items:center; }
+  .pill { font-size:12px; padding:4px 10px; border-radius:12px;
+          border:1px solid var(--line); color:var(--mut); white-space:nowrap; }
+  .pill.ok { color:var(--grn); border-color:var(--grn); }
+  .pill.bad { color:var(--red); border-color:var(--red); }
+  .pill.warn { color:var(--amb); border-color:var(--amb); }
+  main { display:grid; grid-template-columns:1fr 360px; gap:12px;
+         padding:12px; max-width:1280px; margin:auto; align-items:start; }
   #chat { display:flex; flex-direction:column; gap:8px; }
-  .msg { background:var(--panel); border:1px solid #30363d; border-radius:8px; padding:10px 12px; white-space:pre-wrap; font-size:14px; }
+  #msgs { display:flex; flex-direction:column; gap:8px; max-height:72vh; overflow:auto; }
+  .msg { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+         padding:10px 12px; white-space:pre-wrap; word-wrap:break-word; }
   .msg.user { border-left:3px solid var(--acc); }
-  .msg.bot { border-left:3px solid var(--grn); }
-  .route { color:var(--mut); font-size:12px; margin-bottom:4px; }
-  #inputrow { display:flex; gap:8px; }
-  #msg { flex:1; padding:10px; border-radius:8px; border:1px solid #30363d; background:var(--panel); color:var(--fg); }
-  button { padding:10px 16px; border-radius:8px; border:1px solid var(--acc); background:transparent; color:var(--acc); cursor:pointer; }
-  button:disabled { opacity:.5; cursor:wait; }
-  #trace { background:var(--panel); border:1px solid #30363d; border-radius:8px; padding:10px; font-size:12px; max-height:70vh; overflow:auto; }
-  #trace h3 { margin:0 0 8px; font-size:13px; color:var(--mut); text-transform:uppercase; letter-spacing:.5px; }
-  .tstep { border-left:2px solid #30363d; padding:4px 8px; margin-bottom:8px; }
-  .tstep .tool { color:var(--acc); font-family:monospace; }
-  .tstep .res { color:var(--mut); font-family:monospace; font-size:11px; word-break:break-all; }
+  .msg.bot  { border-left:3px solid var(--grn); }
+  .msg.err  { border-left:3px solid var(--red); }
+  .route { color:var(--mut); font-size:12px; margin-bottom:6px; }
+  .route b { color:var(--acc); }
+  .files a { display:inline-block; margin:6px 8px 0 0; padding:5px 10px;
+             border:1px solid var(--acc); border-radius:6px; color:var(--acc);
+             text-decoration:none; font-size:13px; }
+  #inputrow { display:flex; gap:8px; align-items:center; }
+  #msg { flex:1; padding:10px; border-radius:8px; border:1px solid var(--line);
+         background:var(--panel); color:var(--fg); font:inherit; }
+  button, label.btn { padding:10px 14px; border-radius:8px; border:1px solid var(--acc);
+           background:transparent; color:var(--acc); cursor:pointer; font:inherit; }
+  button:disabled { opacity:.45; cursor:progress; }
+  .side { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+          padding:10px; margin-bottom:12px; }
+  .side h3 { margin:0 0 8px; font-size:12px; color:var(--mut);
+             text-transform:uppercase; letter-spacing:.6px; }
+  #steps { max-height:52vh; overflow:auto; }
+  .tstep { border-left:2px solid var(--line); padding:4px 8px; margin-bottom:8px; font-size:12px; }
+  .tstep .tool { color:var(--acc); font-family:ui-monospace,Consolas,monospace; }
+  .tstep .args { color:var(--mut); font-family:ui-monospace,Consolas,monospace; font-size:11px; }
+  .tstep .res { color:#9aa4ae; font-family:ui-monospace,Consolas,monospace;
+                font-size:11px; white-space:pre-wrap; margin-top:3px;
+                max-height:90px; overflow:auto; }
+  .tstep.final { border-left-color:var(--grn); color:var(--grn); }
+  .ex { display:block; width:100%; text-align:left; margin-bottom:6px; font-size:12.5px;
+        border-color:var(--line); color:var(--fg); }
+  .ex:hover { border-color:var(--acc); }
+  .prow { font-family:ui-monospace,Consolas,monospace; font-size:11.5px;
+          padding:3px 6px; border-radius:4px; margin-top:4px; }
+  .prow.deny  { background:#2d1113; color:#ff9d9d; border:1px solid var(--red); }
+  .prow.allow { background:#2d2611; color:#ffd98a; border:1px solid var(--amb); }
+  .verdict { margin-top:8px; font-weight:600; font-size:12px; }
+  .verdict.good { color:var(--grn); } .verdict.bad { color:var(--red); }
+  .spin { display:inline-block; animation:b 1s steps(4) infinite; }
+  @keyframes b { to { opacity:.25 } }
   a { color:var(--acc); }
 </style>
 </head>
 <body>
 <header>
-  <b>Sovereign AI Workbench <span style="color:var(--mut);font-weight:400">· SIH26117 POC · air-gapped</span></b>
-  <span id="egress">external calls: …</span>
+  <div class="brand"><b>Sovereign AI Workbench</b>
+    <span>· SIH26117 · MRPL · runs entirely on-premise</span></div>
+  <div class="pills">
+    <span class="pill" id="runtime">runtime: checking</span>
+    <span class="pill" id="egress">external calls: -</span>
+  </div>
 </header>
+
 <main>
   <div id="chat">
-    <div id="msgs">
-      <div class="msg bot">Air-gapped workbench ready. Try:<br>
-      • "Summarize sop_pump_maintenance.txt and draft an approval note as a docx"<br>
-      • "Write and run a Python script that counts errors in log_sample.txt"<br>
-      • "Read scanned_report.png and list the findings"</div>
-    </div>
+    <div id="msgs"></div>
     <div id="inputrow">
-      <input id="msg" placeholder="Describe a task…" autofocus>
+      <input id="msg" placeholder="Describe a task, e.g. draft an approval note from the inspection report" autofocus>
+      <label class="btn" title="Attach a scan or PDF">
+        attach<input id="file" type="file" hidden accept="image/*,.pdf,.xlsx,.txt">
+      </label>
       <button id="send">Send</button>
     </div>
   </div>
-  <div id="trace"><h3>Execution trace</h3><div id="steps"></div></div>
+
+  <div>
+    <div class="side">
+      <h3>Try these</h3>
+      <button class="ex">Summarise the pump maintenance SOP and draft an approval note as a Word file</button>
+      <button class="ex">Write and run a Python script that counts ERROR lines in log_sample.txt</button>
+      <button class="ex">Read scanned_report.png and list the key findings</button>
+      <button class="ex">From spares.xlsx compute the total order value including 18% GST</button>
+    </div>
+    <div class="side">
+      <h3>Execution trace</h3>
+      <div id="steps"><span style="color:var(--mut);font-size:12px">No task run yet.</span></div>
+    </div>
+    <div class="side">
+      <h3>Sovereignty proof</h3>
+      <button class="ex" id="probe">Attempt an outbound connection &rarr;</button>
+      <div id="probebox" style="font-size:12px;color:var(--mut)">
+        Actively tries to reach the internet from inside the sandbox.
+      </div>
+    </div>
+    <div class="side">
+      <h3>Audit</h3>
+      <div id="auditbox" style="font-size:12px;color:var(--mut)">-</div>
+    </div>
+  </div>
 </main>
+
 <script>
-const msgs = document.getElementById('msgs'), steps = document.getElementById('steps');
-const inp = document.getElementById('msg'), btn = document.getElementById('send');
+const $ = id => document.getElementById(id);
+const msgs = $('msgs'), steps = $('steps'), inp = $('msg'), btn = $('send'), fileInp = $('file');
+let attachment = null;
 
-async function pollEgress() {
+function add(cls, html) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + cls;
+  d.innerHTML = html;
+  msgs.appendChild(d);
+  msgs.scrollTop = msgs.scrollHeight;
+  return d;
+}
+const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+add('bot', 'Air-gapped workbench ready. Nothing you send here leaves this machine — ' +
+           'the badges above show the live external-connection count and which models are loaded.');
+
+async function poll() {
   try {
-    const r = await fetch('/api/egress').then(r=>r.json());
-    const el = document.getElementById('egress');
-    el.textContent = 'external calls: ' + r.external_calls;
-    el.className = r.external_calls === 0 ? 'zero' : 'bad';
-  } catch(e){}
+    const e = await (await fetch('/api/egress')).json();
+    const el = $('egress');
+    el.textContent = 'external calls: ' + e.external_calls;
+    el.className = 'pill ' + (e.external_calls === 0 ? 'ok' : 'bad');
+  } catch (_) {}
+  try {
+    const m = await (await fetch('/api/models')).json();
+    const el = $('runtime');
+    if (m.runtime_up) {
+      el.textContent = 'models loaded: ' + m.runtime_models.length;
+      el.className = 'pill ok';
+    } else {
+      el.textContent = 'runtime down — run: ollama serve';
+      el.className = 'pill warn';
+    }
+  } catch (_) {}
+  try {
+    const a = await (await fetch('/api/audit?n=1')).json();
+    const s = a.summary;
+    $('auditbox').innerHTML =
+      'records: <b>' + s.total_records + '</b><br>' +
+      'destinations: ' + (Object.keys(s.destinations).join(', ') || '-') + '<br>' +
+      'all local: <b style="color:' + (s.all_local ? 'var(--grn)' : 'var(--red)') + '">' +
+      s.all_local + '</b>';
+  } catch (_) {}
 }
-pollEgress(); setInterval(pollEgress, 5000);
+poll(); setInterval(poll, 5000);
 
-function addMsg(cls, html){ const d=document.createElement('div'); d.className='msg '+cls; d.innerHTML=html; msgs.appendChild(d); msgs.scrollTop=msgs.scrollHeight; }
-
-async function send(){
-  const text = inp.value.trim(); if(!text) return;
-  inp.value=''; btn.disabled=true;
-  addMsg('user', text);
-  const attach = text.match(/[\w.\-]+\.(png|jpg|jpeg|tif|tiff)/i);
-  const r = await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({message:text, attachment: attach?attach[0]:null})}).then(r=>r.json());
-  const route = `<div class="route">task: ${r.task} → model: <b>${r.model}</b> (${r.reason})</div>`;
-  let ans = (r.answer||'').replace(/</g,'&lt;');
-  const fm = (r.answer||'').match(/Deliverable created: ([\w.\-]+)/);
-  if (fm) ans += `<br><br><a href="/api/download/${fm[1]}">⬇ Download ${fm[1]}</a>`;
-  addMsg('bot', route + ans);
-  steps.innerHTML = (r.trace||[]).map(t =>
-    `<div class="tstep"><b>step ${t.step}</b> ${t.type==='tool'?
-      `<span class="tool">${t.tool}()</span><div class="res">${(t.result||'').replace(/</g,'&lt;').slice(0,300)}</div>`:
-      `<span style="color:var(--grn)">final answer</span>`}</div>`).join('');
-  btn.disabled=false;
+function renderTrace(trace) {
+  if (!trace || !trace.length) { steps.innerHTML = '<span style="color:var(--mut);font-size:12px">No tool calls.</span>'; return; }
+  steps.innerHTML = trace.map(t => t.type === 'tool'
+    ? '<div class="tstep"><b>step ' + t.step + '</b> <span class="tool">' + esc(t.tool) + '()</span>' +
+      '<div class="args">' + esc(JSON.stringify(t.args).slice(0, 160)) + '</div>' +
+      '<div class="res">' + esc((t.result || '').slice(0, 400)) + '</div></div>'
+    : '<div class="tstep final"><b>step ' + t.step + '</b> final answer</div>'
+  ).join('');
 }
+
+fileInp.onchange = async () => {
+  const f = fileInp.files[0]; if (!f) return;
+  const fd = new FormData(); fd.append('file', f);
+  const r = await (await fetch('/api/upload', { method: 'POST', body: fd })).json();
+  attachment = r.saved;
+  add('user', 'Attached <b>' + esc(r.saved) + '</b> (' + r.kind + ', ' + r.bytes + ' bytes) — now ask a question about it.');
+};
+
+function stepHtml(t) {
+  return '<div class="tstep"><b>step ' + t.step + '</b> <span class="tool">' + esc(t.tool) + '()</span>' +
+         '<div class="args">' + esc(JSON.stringify(t.args).slice(0, 160)) + '</div>' +
+         '<div class="res">' + esc((t.result || '').slice(0, 400)) + '</div></div>';
+}
+
+async function send() {
+  const text = inp.value.trim();
+  if (!text) return;
+  inp.value = ''; btn.disabled = true;
+  add('user', esc(text) + (attachment ? '<div class="route">with ' + esc(attachment) + '</div>' : ''));
+  const pending = add('bot', '<span class="spin">thinking…</span>');
+  const t0 = Date.now();
+  steps.innerHTML = '';
+  let route = null, live = 0;
+
+  try {
+    const resp = await fetch('/api/chat/stream', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, attachment })
+    });
+    attachment = null;
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop();
+
+      for (const part of parts) {
+        const line = part.replace(/^data: /, '').trim();
+        if (!line) continue;
+        let ev; try { ev = JSON.parse(line); } catch (_) { continue; }
+
+        if (ev.type === 'route') {
+          route = ev;
+          const orch = (ev.orchestrator && ev.orchestrator !== ev.model)
+            ? ' + orchestrator <b>' + esc(ev.orchestrator) + '</b>' : '';
+          pending.innerHTML = '<div class="route">task <b>' + esc(ev.task) + '</b> → model <b>' +
+            esc(ev.model) + '</b>' + orch + ' <span>(' + esc(ev.classified_by || '') + ')</span></div>' +
+            '<span class="spin">working…</span>';
+        } else if (ev.type === 'step') {
+          live++;
+          steps.insertAdjacentHTML('beforeend', stepHtml(ev));
+          steps.scrollTop = steps.scrollHeight;
+          pending.querySelector('.spin').textContent =
+            'step ' + ev.step + ': ' + ev.tool + '() …';
+        } else if (ev.type === 'final') {
+          const head = '<div class="route">task <b>' + esc(route ? route.task : '') +
+            '</b> → model <b>' + esc(route ? route.model : '') + '</b>' +
+            ' · ' + (ev.steps || live) + ' steps · ' +
+            (ev.secs != null ? ev.secs : ((Date.now() - t0) / 1000).toFixed(1)) + 's</div>';
+          const files = (ev.files || []).map(f =>
+            '<a href="/api/download/' + encodeURIComponent(f) + '">download ' + esc(f) + '</a>').join('');
+          pending.className = 'msg bot';
+          pending.innerHTML = head + esc(ev.answer) +
+            (files ? '<div class="files">' + files + '</div>' : '');
+          renderTrace(ev.trace);
+        }
+      }
+    }
+  } catch (err) {
+    pending.className = 'msg err';
+    pending.textContent = 'Request failed: ' + err;
+  }
+  btn.disabled = false; poll();
+}
+
+document.getElementById('probe').onclick = async (e) => {
+  const b = e.target, box = document.getElementById('probebox');
+  b.disabled = true;
+  box.innerHTML = '<span class="spin">attempting outbound connections…</span>';
+  try {
+    const r = await (await fetch('/api/egress/probe', { method: 'POST' })).json();
+    box.innerHTML = r.rows.map(x =>
+      '<div class="prow ' + (x.state === 'DENIED' ? 'deny' : 'allow') + '">' +
+      x.state + ' · ' + esc(x.detail) + '</div>').join('') +
+      '<div class="verdict ' + (r.denied ? 'good' : 'bad') + '">' + esc(r.verdict) + '</div>';
+  } catch (err) {
+    box.textContent = 'probe failed: ' + err;
+  }
+  b.disabled = false; poll();
+};
+
 btn.onclick = send;
-inp.addEventListener('keydown', e => { if(e.key==='Enter') send(); });
+inp.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+document.querySelectorAll('.ex').forEach(b =>
+  b.onclick = () => { inp.value = b.textContent; send(); });
 </script>
 </body>
 </html>
