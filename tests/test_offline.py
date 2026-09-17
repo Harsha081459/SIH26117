@@ -103,6 +103,32 @@ def test_approval_note_has_structured_sections():
     assert "Generated on-premise" in text
 
 
+def test_attachment_is_read_by_the_right_tool():
+    """A text file must not be sent to the vision model."""
+    import main
+    cases = {
+        "scan.png": ("ocr_doc", "image"),
+        "drawing.JPG": ("ocr_doc", "image"),
+        "report.pdf": ("pdf_read", "pdf"),
+        "spares.xlsx": ("sheet_read", "spreadsheet"),
+        "DV-Team.txt": ("fs_read", "text"),
+        "notes.md": ("fs_read", "text"),
+        "data.csv": ("fs_read", "text"),
+        "mystery.bin": ("fs_read", "file"),
+    }
+    for name, expected in cases.items():
+        assert main._reader_for(name) == expected, name
+
+    # Only an image attachment should be classified as a vision task.
+    img = router.route("what is this", has_attachment=True,
+                       attachment_kind="image", use_llm=False, resolve=False)
+    txt = router.route("what is this", has_attachment=True,
+                       attachment_kind="text", use_llm=False, resolve=False)
+    assert img["task"] == "image_understanding"
+    assert txt["task"] != "image_understanding"
+    assert "vl" not in txt["model"].lower()
+
+
 def test_vision_task_uses_reasoning_model_to_orchestrate():
     """A VL model should read the image, not drive the whole loop."""
     r = router.route("read scanned_report.png", has_attachment=True,

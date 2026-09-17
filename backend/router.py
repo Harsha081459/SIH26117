@@ -57,9 +57,14 @@ def classify_llm(message):
     return None
 
 
-def classify(message, has_attachment=False, use_llm=True):
+def classify(message, has_attachment=False, use_llm=True, attachment_kind=None):
+    # Only an image attachment implies a vision task. A text file or a
+    # spreadsheet is read by its own tool, and forcing the vision model on it
+    # produces a failure the model then tries to explain.
+    if has_attachment and attachment_kind in (None, "image"):
+        return "image_understanding", "image attached"
     if has_attachment:
-        return "image_understanding", "attachment present"
+        return "analyze", "{} attached".format(attachment_kind)
     task = classify_keywords(message)
     if task:
         return task, "keyword rules"
@@ -101,7 +106,8 @@ def _resolve(model_id):
 VISION_TASKS = ("image_understanding", "ocr_handwriting", "drawing_review")
 
 
-def route(message, has_attachment=False, use_llm=True, resolve=True):
+def route(message, has_attachment=False, use_llm=True, resolve=True,
+          attachment_kind=None):
     """Pick the model for the task, and the model that should drive the loop.
 
     These are not always the same. A vision-language model is the right thing to
@@ -110,7 +116,7 @@ def route(message, has_attachment=False, use_llm=True, resolve=True):
     keep the vision model for the reading (reached through the ocr_doc tool) and
     let the reasoning model orchestrate.
     """
-    task, how = classify(message, has_attachment, use_llm)
+    task, how = classify(message, has_attachment, use_llm, attachment_kind)
     model, reason = pick_model(task)
     orchestrator = model
     orch_note = None

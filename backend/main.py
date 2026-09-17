@@ -22,6 +22,27 @@ app = FastAPI(title="Sovereign AI Workbench - SIH26117")
 LOCAL_PREFIXES = ("127.", "10.", "172.16.", "172.17.", "172.18.", "192.168.",
                   "169.254.", "::1", "fe80:")
 IMAGE_EXT = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp")
+SHEET_EXT = (".xlsx", ".xlsm")
+TEXT_EXT = (".txt", ".md", ".csv", ".log", ".json", ".yaml", ".yml", ".ini", ".py")
+
+
+def _reader_for(name):
+    """Choose the right tool for an attachment, and name its kind.
+
+    Dispatching on the file type matters: sending a text file to the vision
+    model produces a confusing failure, and the model will then try to explain
+    that failure instead of answering the question.
+    """
+    low = (name or "").lower()
+    if low.endswith(IMAGE_EXT):
+        return "ocr_doc", "image"
+    if low.endswith(".pdf"):
+        return "pdf_read", "pdf"
+    if low.endswith(SHEET_EXT):
+        return "sheet_read", "spreadsheet"
+    if low.endswith(TEXT_EXT):
+        return "fs_read", "text"
+    return "fs_read", "file"
 
 
 class Chat(BaseModel):
@@ -31,18 +52,18 @@ class Chat(BaseModel):
 
 @app.post("/api/chat")
 def chat(body: Chat):
-    has_attach = bool(body.attachment)
-    r = model_router.route(body.message, has_attachment=has_attach)
+    name = body.attachment
+    reader, kind = _reader_for(name) if name else (None, None)
+    r = model_router.route(body.message, has_attachment=bool(name),
+                           attachment_kind=kind)
 
-    # An attached image or PDF is read first, then the question is answered
-    # with that content in hand.
-    if has_attach:
-        name = body.attachment
-        reader = "pdf_read" if name.lower().endswith(".pdf") else "ocr_doc"
+    # An attachment is read with the tool that suits its type, then the
+    # question is answered with that content in hand.
+    if name:
         extracted = call(reader, {"path": name})
-        task = ("The following content was extracted from the attached file '{}':\n\n{}\n\n"
-                "Using only that content, answer the user's request: {}").format(
-                    name, extracted[:6000], body.message)
+        task = ("The following content was read from the attached {} '{}':\n\n{}\n\n"
+                "Using that content, answer the user's request: {}").format(
+                    kind, name, extracted[:6000], body.message)
         try:
             out = agent.run(task, r.get("orchestrator") or r["model"], max_steps=6)
         except Exception as e:
@@ -71,19 +92,20 @@ def chat_stream(body: Chat):
     Keeps the interface informative while a local model is thinking, and lets a
     reviewer watch the agent actually take steps.
     """
-    r = model_router.route(body.message, has_attachment=bool(body.attachment))
+    name = body.attachment
+    reader, kind = _reader_for(name) if name else (None, None)
+    r = model_router.route(body.message, has_attachment=bool(name),
+                           attachment_kind=kind)
     task = body.message
     prelude = []
 
-    if body.attachment:
-        name = body.attachment
-        reader = "pdf_read" if name.lower().endswith(".pdf") else "ocr_doc"
+    if name:
         extracted = call(reader, {"path": name})
         prelude.append({"step": 0, "type": "step", "tool": reader,
                         "args": {"path": name}, "result": extracted[:600]})
-        task = ("The following content was extracted from the attached file '{}':\n\n{}\n\n"
-                "Using only that content, answer the user's request: {}").format(
-                    name, extracted[:6000], body.message)
+        task = ("The following content was read from the attached {} '{}':\n\n{}\n\n"
+                "Using that content, answer the user's request: {}").format(
+                    kind, name, extracted[:6000], body.message)
 
     def events():
         yield "data: " + json.dumps({"type": "route", **r}) + "\n\n"
