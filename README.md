@@ -34,19 +34,28 @@ This repo is the on-prem answer the PS asks for: open weights, real tools, agent
 
 ## What judges should see (4 proofs)
 
-| Proof | What fires | Where |
-| --- | --- | --- |
-| Model auto-select (≥2 types) | docs vs code vs vision pick different ids | `router.py` + `models.yaml` |
-| Agentic PDF/scan → Word | upload → `pdf_read`/`ocr_doc` → `make_docx` | agent trace + download link |
-| Sandboxed coding | `run_python` with network removed | Docker `--network none` or `unshare -rn` |
-| Zero egress | badge stays 0; probe button DENY | `/api/egress` + `/api/egress/probe` |
+1. **Model auto-select (≥2 types)**  
+   Docs vs code vs vision pick different ids.  
+   `router.py` + `models.yaml`
 
-Bonus already in the tree: local KB over SOPs, spreadsheet read, AST calculator (no `eval`), audit log of every model/tool destination.
+2. **Agentic PDF/scan → Word**  
+   Upload → `pdf_read` / `ocr_doc` → `make_docx`.  
+   Live agent trace + download link.
+
+3. **Sandboxed coding**  
+   `run_python` with network removed.  
+   Docker `network=none` or `unshare -rn`.
+
+4. **Zero egress**  
+   Badge stays 0. Probe button shows DENY.  
+   `/api/egress` + `/api/egress/probe`
+
+Also in the tree: local KB over SOPs, spreadsheet read, AST calculator (no `eval`), audit log of every model/tool destination.
 
 ## Request path
 
 ```
-Browser  --SSE-->  FastAPI
+Browser  =SSE=>  FastAPI
                      |
                      +--> route(task) --> model + orchestrator
                      |
@@ -68,12 +77,12 @@ Vision tasks: VL model reads the image; reasoning model drives the loop. Both sh
 
 Preferred pulls (mid GPU / 16 GB class):
 
-| Role | Tag |
-| --- | --- |
-| Orchestration / drafts | `qwen3:8b` |
-| Coding | `qwen2.5-coder:7b` |
-| Vision / scans / P&ID | `qwen3-vl:8b` (fallback `qwen3-vl:4b`) |
-| KB embeddings | `nomic-embed-text` |
+```
+orchestration / drafts     qwen3:8b
+coding                     qwen2.5-coder:7b
+vision / scans / P&ID      qwen3-vl:8b   (fallback qwen3-vl:4b)
+KB embeddings              nomic-embed-text
+```
 
 Add a model by editing `backend/models.yaml`. If a tag is missing, `router._resolve()` substitutes same-family, then default, then whatever is loaded. Legacy qwen2.5 ids remain listed so an existing box keeps running.
 
@@ -83,7 +92,7 @@ Optional: install `paddleocr` for a deterministic OCR pass before the VL model. 
 
 Generated code tries isolation in order. The tool result names which tier ran:
 
-1. Docker `--network none`
+1. Docker with `network=none`
 2. `unshare -rn` network namespace (no root)
 3. Timed subprocess labelled `NOT network-isolated`
 
@@ -93,16 +102,17 @@ We do not claim tier 3 is air-gapped.
 
 Workstation: **RTX 4060 Ti 16 GB**, Ollama local. Outcomes below are from the live agent (same tool chain as today). Registry now prefers qwen3; if those tags are not pulled yet, substitution keeps the loop green.
 
-| Task | Result | Notes |
-| --- | --- | --- |
-| Count ERROR lines in `log_sample.txt` via sandbox | **3** | `network=none` sandbox |
-| KB: vibration alert for pump P-201 | **4.5 mm/s RMS** (SOP-MECH-041) | hybrid embed + keyword |
-| `spares.xlsx` + 18% GST → Word approval note | **₹62304** + downloadable `.docx` | multi-step tool chain |
-| `scanned_report.png` | seal leak **14/min** (limit 10); bearing **74.8°C** | local VL |
-| mixed PDF / P&ID / handwritten note | text + tags recovered | `pdf_read` + VL |
-| egress probe | **ALL OUTBOUND DENIED** | active fail, not a slide claim |
+```
+sandbox ERROR count in log_sample.txt     ->  3
+KB vibration limit pump P-201             ->  4.5 mm/s RMS (SOP-MECH-041)
+spares.xlsx + 18% GST -> Word note        ->  Rs 62304 + downloadable .docx
+scanned_report.png                        ->  seal 14/min (limit 10); bearing 74.8 C
+mixed PDF / P&ID / handwritten note       ->  text + tags recovered
+egress probe                              ->  ALL OUTBOUND DENIED
+```
 
-Full click path: [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md). Design notes: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Full click path: [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md)  
+Design notes: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 
 ## Run
 
