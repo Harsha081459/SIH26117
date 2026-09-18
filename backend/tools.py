@@ -276,8 +276,7 @@ def pdf_read(path: str, max_pages: int = 8) -> str:
             page.get_pixmap(dpi=170).save(str(img_path))
             # ocr_doc already runs optional PaddleOCR then the vision model
             extracted = ocr_doc(img_path.name)
-            chunks.append("[page {} - scanned]
-{}".format(i + 1, extracted[:4000]))
+            chunks.append("[page {} - scanned]\n{}".format(i + 1, extracted[:4000]))
         except Exception as e:
             chunks.append("[page {} - scanned; vision model unavailable: {}]".format(
                 i + 1, str(e)[:120]))
