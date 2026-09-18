@@ -8,22 +8,35 @@
 # substitutes the closest model that is loaded. That is what allows the same
 # deployment to run on a 16 GB workstation and on a larger GPU server.
 
-default: qwen2.5:7b-instruct
+default: qwen3:8b
 
 models:
-  - id: qwen2.5:7b-instruct
+  - id: qwen3:8b
     tasks: [summarize, draft_document, analyze, plan, general]
-    reason: "general reasoning and document drafting"
+    reason: "general reasoning and document drafting (Qwen3)"
 
   - id: qwen2.5-coder:7b
     tasks: [write_code, debug, explain_code]
     reason: "code-specialised model"
 
-  - id: qwen2.5vl:3b
+  - id: qwen3-vl:8b
     tasks: [image_understanding, ocr_handwriting, drawing_review]
     reason: "vision-language model for scans, drawings and handwriting"
 
-  # Larger tier -- used automatically when present on a bigger GPU server.
+  - id: qwen3-vl:4b
+    tasks: [image_understanding, ocr_handwriting, drawing_review]
+    reason: "smaller VL fallback when 8B VRAM is tight"
+
+  # Kept so an existing box that still has these pulled keeps working via
+  # family / substitution if qwen3 tags are not pulled yet.
+  - id: qwen2.5:7b-instruct
+    tasks: [summarize, draft_document, analyze, plan, general]
+    reason: "legacy general model if already loaded"
+
+  - id: qwen2.5vl:3b
+    tasks: [image_understanding, ocr_handwriting, drawing_review]
+    reason: "legacy vision model if already loaded"
+
   - id: qwen2.5:14b-instruct
     tasks: [long_document, board_note]
     reason: "higher-quality drafting when VRAM allows"

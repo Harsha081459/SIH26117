@@ -168,6 +168,10 @@ def _vision_model():
     """Pick a vision model that is actually loaded rather than a hardcoded name."""
     from ollama_client import list_models
     loaded = list_models()
+    preferred = ("qwen3-vl:8b", "qwen3-vl:4b", "qwen2.5vl:3b", "qwen2-vl:7b")
+    for pref in preferred:
+        if pref in loaded:
+            return pref
     for m in loaded:
         low = m.lower()
         if any(tag in low for tag in ("vl", "vision", "llava", "moondream", "minicpm-v")):
@@ -176,11 +180,52 @@ def _vision_model():
     for entry in router.registry()["models"]:
         if "image_understanding" in entry["tasks"]:
             return entry["id"]
-    return loaded[0] if loaded else "qwen2.5vl:3b"
+    return loaded[0] if loaded else "qwen3-vl:8b"
+
+
+_paddle_engine = None
+
+
+def _paddle_ocr_image(image_path: str):
+    """Optional deterministic OCR. Returns text or None if paddleocr is absent/fails.
+
+    Not a hard dependency — boxes that only have Ollama keep working.
+    """
+    global _paddle_engine
+    try:
+        from paddleocr import PaddleOCR
+    except ImportError:
+        return None
+    try:
+        if _paddle_engine is None:
+            try:
+                _paddle_engine = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
+            except TypeError:
+                _paddle_engine = PaddleOCR(use_angle_cls=True, lang="en")
+        result = _paddle_engine.ocr(str(image_path), cls=True)
+        lines = []
+        if not result:
+            return None
+        for block in result:
+            if not block:
+                continue
+            for row in block:
+                try:
+                    lines.append(str(row[1][0]).strip())
+                except (IndexError, TypeError, ValueError):
+                    continue
+        text = "\n".join(l for l in lines if l)
+        return text if len(text) >= 20 else None
+    except Exception:
+        return None
 
 
 def ocr_doc(path, vl_model=None):
-    """Read a scanned document, photo, drawing or handwritten note locally."""
+    """Read a scanned document, photo, drawing or handwritten note locally.
+
+    Pipeline: optional PaddleOCR (deterministic) then local vision model for
+    semantics / handwriting when paddle is thin or missing.
+    """
     from ollama_client import generate
     try:
         p = _safe_workspace(path)
@@ -188,19 +233,23 @@ def ocr_doc(path, vl_model=None):
         return "ERROR: path outside workspace"
     if not p.exists():
         return "ERROR: {} not found in workspace".format(path)
+
+    paddle_text = _paddle_ocr_image(str(p))
     model = vl_model or _vision_model()
-    return generate(model,
-                    "Extract all text and key information from this document image. "
-                    "List the findings as bullet points, preserving numbers, units "
-                    "and limits exactly as written.",
-                    image_path=str(p))
+    vision = generate(model,
+                      "Extract all text and key information from this document image. "
+                      "List the findings as bullet points, preserving numbers, units "
+                      "and limits exactly as written.",
+                      image_path=str(p))
+    if paddle_text:
+        return ("[ocr:paddleocr]\n{}\n\n[ocr:vision {}]\n{}".format(
+            paddle_text[:4000], model, vision))
+    return "[ocr:vision {}]\n{}".format(model, vision)
 
 
-# ── knowledge base: local embeddings + cosine, keyword fallback ─────────
 def pdf_read(path: str, max_pages: int = 8) -> str:
-    """Read a PDF. Uses the embedded text layer when present; falls back to
-    rendering the page and reading it with the local vision model, which is
-    what makes scanned PDFs work."""
+    """Read a PDF. Text layer first; thin/scanned pages use PaddleOCR if
+    installed, then the local vision model."""
     try:
         p = _safe_workspace(path)
     except ValueError:
@@ -222,16 +271,14 @@ def pdf_read(path: str, max_pages: int = 8) -> str:
         if len(text) >= 40:
             chunks.append("[page {} - text layer]\n{}".format(i + 1, text[:2500]))
             continue
-        # No usable text layer: this is a scanned page. Render it and read it
-        # with the local vision model.
         img_path = WORKSPACE / "_pdfpage_{}_{}.png".format(p.stem, i + 1)
         try:
             page.get_pixmap(dpi=170).save(str(img_path))
-            vision = ocr_doc(img_path.name)
-            chunks.append("[page {} - scanned, read by vision model]\n{}".format(
-                i + 1, vision[:2500]))
+            # ocr_doc already runs optional PaddleOCR then the vision model
+            extracted = ocr_doc(img_path.name)
+            chunks.append("[page {} - scanned]
+{}".format(i + 1, extracted[:4000]))
         except Exception as e:
-            # Keep the pages we could read rather than failing the whole file.
             chunks.append("[page {} - scanned; vision model unavailable: {}]".format(
                 i + 1, str(e)[:120]))
     doc.close()

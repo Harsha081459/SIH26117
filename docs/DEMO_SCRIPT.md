@@ -7,7 +7,7 @@ explicitly asks to see.
 
 ```bash
 ollama serve &
-ollama pull qwen2.5:7b-instruct qwen2.5-coder:7b qwen2.5vl:3b
+ollama pull qwen3:8b qwen2.5-coder:7b qwen3-vl:8b qwen3-vl:4b
 cd backend && uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
@@ -20,7 +20,7 @@ Open `http://localhost:8000`. Two badges sit in the header for the whole demo:
 
 > "Summarise the pump maintenance SOP"
 
-Header line shows `task summarize → model qwen2.5:7b-instruct`.
+Header line shows `task summarize → model qwen3:8b`.
 
 > "Write and run a Python script that counts ERROR lines in log_sample.txt"
 
@@ -127,7 +127,7 @@ calculator, `audit.py` for the log.
 **"What is your accuracy?"**
 It is a tool-using system, not a classifier, so the honest measure is whether
 tasks complete correctly. On the target 16 GB workstation with
-`qwen2.5:7b-instruct`: the counting task 2 steps / 1.2 s, the knowledge-base
+`qwen3:8b`: the counting task 2 steps / 1.2 s, the knowledge-base
 lookup 2 steps / 1.5 s, the spreadsheet-to-Word-file task 5 steps / 6.7 s with
 the correct total. Small models do sometimes emit malformed actions — the parser
 accepts the shapes we observed in real runs, retries with corrective feedback,

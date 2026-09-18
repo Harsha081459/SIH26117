@@ -46,7 +46,7 @@ machine.
            |        Agent  ─ plan → act → observe, max 10 steps
            |        Tools  ─ fs · sandbox · ocr · pdf · kb · sheets · calc · docx/xlsx/pptx
            |
-      Ollama on 127.0.0.1  (qwen2.5 · qwen2.5-coder · qwen2.5vl)
+      Ollama on 127.0.0.1  (qwen3 · qwen2.5-coder · qwen3-vl; optional PaddleOCR)
            |
       Audit log (every model + tool call, with destination)
       Egress monitor (outbound connections outside the premises)
@@ -63,7 +63,7 @@ in order and the response states which one ran:
 ## Verified run
 
 Measured on the deployment target: a workstation with an RTX 4060 Ti (16 GB),
-`qwen2.5:7b-instruct` + `qwen2.5vl:3b` served locally by Ollama.
+`qwen3:8b` + `qwen3-vl:8b` (or `4b`) served locally by Ollama; legacy qwen2.5 tags still substitute if already loaded.
 
 ```
 TASK: How many ERROR lines are in log_sample.txt? Count them with the sandbox.
@@ -141,9 +141,11 @@ Manual equivalent:
 ```bash
 pip install -r requirements.txt
 ollama serve &
-ollama pull qwen2.5:7b-instruct     # reasoning, drafting, orchestration
+ollama pull qwen3:8b                # reasoning, drafting, orchestration
 ollama pull qwen2.5-coder:7b        # coding tasks
-ollama pull qwen2.5vl:3b            # scans, drawings, handwriting
+ollama pull qwen3-vl:8b             # scans, drawings, handwriting
+ollama pull qwen3-vl:4b             # smaller VL fallback
+# optional better scan OCR (not required): pip install paddlepaddle paddleocr
 cd backend && uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
@@ -188,6 +190,7 @@ included.
 
 ## Known limits
 
+- PaddleOCR is optional. If `paddleocr` is installed it runs as a deterministic first pass on scans; if not, the vision model path is unchanged.
 - Small models occasionally emit malformed actions. The parser accepts the shapes
   we observed in real runs and retries with corrective feedback, but a 3B model
   needs more retries than a 7B one.

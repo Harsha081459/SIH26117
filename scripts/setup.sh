@@ -66,7 +66,7 @@ say "models"
 # Order matters: the first two give the model-auto-selection demo, the third
 # handles scans and drawings. Any subset works -- an absent model is
 # substituted at runtime by router._resolve().
-for m in qwen2.5:7b-instruct qwen2.5-coder:7b qwen2.5vl:3b nomic-embed-text; do
+for m in qwen3:8b qwen2.5-coder:7b qwen3-vl:8b qwen3-vl:4b nomic-embed-text; do
   if ollama list 2>/dev/null | awk '{print $1}' | grep -qx "$m"; then
     echo "have $m"
   else
