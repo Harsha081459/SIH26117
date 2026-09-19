@@ -201,7 +201,10 @@ def runtime_status():
             if model.get("remote_model") or model.get("remote_host") or not _local_name(model["name"]):
                 rejected.append(model["name"])
             else:
-                names.append(model["name"])
+                # Ollama stores an untagged pull as name:latest; callers use the
+                # bare name. Normalise so "nomic-embed-text" matches.
+                name = model["name"]
+                names.append(name[:-7] if name.endswith(":latest") else name)
         return {"reachable": True, "models": names, "rejected_remote_models": rejected}
     except (httpx.HTTPError, ValueError, InferenceError) as exc:
         return {"reachable": False, "models": [], "error": _failure(exc)}
