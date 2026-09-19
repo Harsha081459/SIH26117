@@ -196,10 +196,9 @@ refuses to run and says so — the string in the result names the actual tier.
 **Hardware:** GPU workstation (16 GB class) · Ollama local  
 **Models:** `qwen3:8b` + `qwen3-vl:8b` (or `4b`) preferred; legacy `qwen2.5` tags substitute automatically.
 
-These rows are the demo's acceptance checks, not a benchmark. Rows marked
-*(verified)* were run end-to-end on this build with live models on a 16 GB GPU
-workstation (19-Sep-2026); rows marked *(historical)* were observed on a
-previous build and are re-verified on each deployment.
+These rows are the demo's acceptance checks, not a benchmark. All were run
+end-to-end on this build with live models on a 16 GB GPU workstation
+(19-Sep-2026). They are re-verified on each deployment rather than assumed.
 
 | Task | Outcome |
 | :--- | :--- |
@@ -207,10 +206,10 @@ previous build and are re-verified on each deployment.
 | KB: vibration alert limit for pump P-201 | **4.5 mm/s RMS** · SOP-MECH-041 *(verified)* |
 | `spares.xlsx` + 18% GST → approval Word file | **Rs 62304** · verified `.docx` on disk *(verified)* |
 | `pid_crude_transfer.png` | tags VI/TI/PI on P-201 + 4.5 mm/s RMS *(verified)* |
+| `scanned_report.png` | seal **14 drops/min** (limit 10) · bearing **74.8 C** *(verified)* |
+| `inspection_report.pdf` (text + scanned pages) | both layers recovered *(verified)* |
+| `handwritten_shift_note.png` | seepage rate, actions, signer *(verified)* |
 | Outbound socket inside sandbox | `Errno 101` — connection blocked for real *(verified)* |
-| `scanned_report.png` | seal **14 drops/min** (limit 10) · bearing **74.8 C** *(historical)* |
-| `inspection_report.pdf` (text + scanned pages) | both layers recovered *(historical)* |
-| `handwritten_shift_note.png` | shift time, actions, signer *(historical)* |
 | Egress probe | every row reports its real state; **DENIED** only when the probe actually ran and failed to connect *(verified)* |
 
 ## Run in three steps
