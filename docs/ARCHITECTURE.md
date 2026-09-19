@@ -27,16 +27,19 @@ the system has to be able to show it.
     |
     +--> Agent loop  (agent.py)    plan -> act -> observe, repeat
     |        |
-    |        +--> Tool registry (tools.py)   13 local tools
-    |        |         fs_list / fs_read / fs_write
-    |        |         run_python        network-isolated sandbox
-    |        |         ocr_doc           local vision model
-    |        |         pdf_read          text layer, else vision per page
+    |        +--> Tool registry (tools.py)   15 local tools; every call runs
+    |        |                               inside a per-request file scope
+    |        |         fs_list / fs_read / fs_write   scope-enforced
+    |        |         run_python        docker / bubblewrap, no host fallback
+    |        |         ocr_doc           vision model + optional PaddleOCR
+    |        |         pdf_read          text layer, else OCR per page
+    |        |         office_read       DOCX / PPTX attachments
     |        |         kb_search         local embeddings over corpus/
-    |        |         sheet_read
+    |        |         sheet_read        preserves 0 / False / quoted commas
     |        |         calculate         AST evaluator, shows every step
-    |        |         egress_probe      actively proves isolation
-    |        |         make_docx / make_xlsx / make_pptx
+    |        |         egress_probe      blocked / reachable / inconclusive
+    |        |         make_docx / make_xlsx / make_pptx / compose_deck
+    |        |                           verified on disk before success
     |        |
     |        +--> Ollama client (ollama_client.py) --> 127.0.0.1:11434
     |
@@ -66,11 +69,14 @@ response, so the interface shows two models cooperating on one request.
 ids. Adding a newly released open-weight model is a new block in that file.
 Nothing imports a model name.
 
-**Absent models are substituted.** The machine that runs the demo may not hold
-the same models as the machine it was built on, so `router._resolve()` maps a
-configured id onto the closest one the runtime actually has — same family first,
-then the default, then whatever is loaded. This is why the same checkout runs on
-a 16 GB workstation and on a larger GPU server.
+**Absent models are substituted — within capabilities.** The machine that runs
+the demo may not hold the same models as the machine it was built on, so
+`router._resolve()` maps a configured id onto a *registered, compatible* model
+the runtime actually has. The `capabilities` field in `models.yaml` is the
+gate: a vision request never resolves to a text-only or embedding model, and
+when nothing compatible is installed the request fails with an explicit error
+rather than a silent downgrade. Runtime unavailable, registry mismatch and
+no-compatible-model are reported as three distinct errors.
 
 ---
 
@@ -105,23 +111,53 @@ caller is a model that can correct itself if told how.
 
 ---
 
+## Request scoping and verified success
+
+Two integrity rules run underneath the loop — both enforced in code, not in the
+system prompt.
+
+**Per-request file scope.** Every tool call executes inside a scope resolved
+from the request: the attached file plus workspace files the user explicitly
+named. Reads outside that scope fail in `_safe_workspace`, so a file merely
+*mentioned inside* a document's text never becomes readable, `fs_list` shows
+only authorised files unless the request asks for a listing, knowledge-base
+search runs only when the request calls for it, and sandbox staging copies only
+authorised inputs. The scope is a context variable, restored when the request
+ends — one request cannot widen another's access.
+
+**Verified artifacts.** A final answer that claims a deliverable is accepted
+only after the file verifies: it exists inside `outputs/`, is not a symlink, is
+within size limits, and parses as its claimed format — DOCX / XLSX / PPTX are
+opened and checked, decks against the requested slide count. Artifacts are
+re-verified immediately before the success response, valid partial results are
+reported as `partial` rather than success, and a forged `FILE:` line cannot
+adopt an older request's output.
+
+---
+
 ## Sandboxing generated code
 
-Model-written code runs with the network taken away. Three levels are attempted
-in order, and **the label in the output names the level that actually ran**:
+Model-written code runs with the network taken away and the filesystem
+restricted. Two isolation tiers are attempted in order, and **the label in the
+output names the tier that actually ran**:
 
-| Level | Mechanism | Requires |
+| Tier | Mechanism | Requires |
 |---|---|---|
-| 1 | `docker run --network none`, memory and CPU capped | Docker |
-| 2 | `unshare -rn` — empty network namespace | Linux user namespaces, no root |
-| 3 | subprocess with timeout, labelled `NOT network-isolated` | nothing |
+| 1 | `docker run --network none`, memory/CPU/pids capped, container removed after | Docker |
+| 2 | `bubblewrap` — restricted mounts, no network access | Linux user namespaces, no root |
 
-Level 2 matters in practice: it gives genuine isolation on a machine where you
-cannot install Docker. Verified — code attempting an outbound connection gets
-`[Errno 101] Network is unreachable`.
+There is deliberately no third tier. An earlier design fell back to a plain
+subprocess labelled "not network-isolated"; that was removed because a labelled
+non-sandbox is still a non-sandbox. If no tier exists, `run_python` returns an
+explicit error and the code does not execute. Resource limits cover CPU,
+memory, process count, file size, open files, output size and wall time;
+timeouts kill the whole process group or container; only files inside the
+request's scope are staged in.
 
-Reporting the level honestly is deliberate. A system that claims isolation it
-does not have is worse than one that says so.
+Historical note: an earlier build used `unshare -rn` (an empty network
+namespace). That isolates networking but not the filesystem, which is why it
+was replaced — verified at the time by a blocked socket (`Errno 101`), but it
+was never filesystem isolation.
 
 ---
 
@@ -134,14 +170,20 @@ problem statement.
 outside private ranges. `scope=process` covers this backend and its children;
 `scope=machine` covers every process on the host.
 
-**Audit log** (`audit.py`) appends one JSON line per model call and per tool call,
-each recording its destination. `summary()` aggregates destinations and reports
+**Audit log** (`audit.py`) appends one JSON line per model call and per tool
+call, recording destination, timing and content *metadata* — byte counts and
+SHA-256 digests — never raw prompts, documents or results; fields that look
+like credentials are redacted. `summary()` aggregates destinations and reports
 `all_local`. Inference is always `127.0.0.1:11434`; tools are `local-process`.
+The log covers instrumented application calls only — it is evidence for the
+demo, not machine-wide monitoring.
 
 **Active probe** (`/api/egress/probe`) is the one that convinces. It deliberately
-attempts HTTPS, DNS and a urllib fetch from inside the sandbox and reports each
-denial. A counter reading zero shows nothing happened to go out; the probe shows
-nothing can.
+attempts outbound connections from inside the sandbox and reports each row as
+blocked, reachable or inconclusive. An inconclusive row means the probe could
+not complete — it is never reported as a denial. A counter reading zero shows
+nothing happened to go out; a completed, denied probe shows the sandboxed code
+could not.
 
 ---
 

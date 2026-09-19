@@ -5,7 +5,7 @@
 **Theme:** Smart Automation · **Team:** LatentX · **Institute:** IIIT Bangalore
 
 > A **multi-model agent harness** that runs entirely on the organisation's own GPU box.  
-> It routes each task to the right open-weight model, calls real local tools, and can **show** that nothing left the machine.
+> It routes each task to the right open-weight model, calls real local tools, and can **show** that its own calls stayed local.
 
 ```
   THIS IS                          THIS IS NOT
@@ -13,7 +13,7 @@
   local agent + tools              a ChatGPT skin
   model router (≥2 types)          one frozen model forever
   PDF/scan → Word deliverable      chat text pretending to be a note
-  Docker / netns sandbox           code running on the host with Wi-Fi
+  Docker / bwrap sandbox           code running on the host with Wi-Fi
   live egress DENY probe           "trust us, we are air-gapped" slide
 ```
 
@@ -83,16 +83,20 @@ ASCII twin (renders everywhere):
 
 ## Mapped to the problem statement
 
+Status labels: **implemented** = code complete · **tested** = covered by the
+offline/browser suites · **verified** = exercised end-to-end on a live model
+runtime. Anything not verified on this build is marked accordingly.
+
 | PS requirement | How we meet it | Status |
 | :---: | :--- | :---: |
-| Multi-model backend, auto-select | `router.py` + `models.yaml`; docs / code / vision differ | live |
-| New models without redesign | add a YAML block; `_resolve()` substitutes if missing | live |
-| Agentic multi-step work | `agent.py` plan → tool → observe, max 10, UI trace | live |
-| Local tools | 13 tools in `tools.py` (fs, sandbox, OCR, PDF, KB, sheets, calc, deliverables, probe) | live |
-| Scanned docs / handwriting / drawings | `ocr_doc`, `pdf_read` (+ optional PaddleOCR) | live |
-| Real deliverables | `make_docx` / `make_xlsx` / `make_pptx` → download | live |
-| Grounded in local manuals | `kb_search` over `corpus/` (embed + keyword) | live |
-| Proof of no external calls | `/api/egress` + `/api/egress/probe` + `audit.jsonl` | live |
+| Multi-model backend, auto-select | `router.py` + `models.yaml`; capability-gated substitution (a vision task never falls back to a text/embedding model) | implemented + tested |
+| New models without redesign | add a YAML block; `_resolve()` substitutes within compatible capabilities | implemented + tested |
+| Agentic multi-step work | `agent.py` plan → tool → observe, max 10, UI trace, cancellable | implemented + tested |
+| Local tools | 15 tools in `tools.py` (fs, sandbox, OCR, PDF, office, KB, sheets, calc, deliverables, probe) | implemented + tested |
+| Scanned docs / handwriting / drawings | `ocr_doc`, `pdf_read` (+ optional PaddleOCR); image path is mock-tested only | implemented + offline-tested |
+| Real deliverables | `make_docx` / `make_xlsx` / `make_pptx` / `compose_deck`; success requires the artifact to verify on disk | implemented + tested |
+| Grounded in local manuals | `kb_search` over `corpus/` (embed + keyword hybrid) | implemented + tested |
+| Proof of no external calls | `/api/egress` + `/api/egress/probe` + `audit.jsonl`; probe reports blocked / reachable / inconclusive honestly | implemented + tested |
 
 ## Four demos that win the room
 
@@ -124,7 +128,7 @@ sequenceDiagram
    Attach `workspace/inspection_report.pdf` (or any scan). Trace shows extract → draft → `.docx` download.
 
 3. **Sandbox proof**  
-   “Count ERROR lines in `log_sample.txt`.” Result prefix names the isolation tier (`docker` / `unshare` / honest non-isolated).
+   “Count ERROR lines in `log_sample.txt`.” Result prefix names the isolation tier (`docker` / `bubblewrap`). If neither is available the tool returns an explicit error — generated code never runs on the host.
 
 4. **Egress proof**  
    Click the probe. Rows show DENIED for HTTPS/DNS. Badge stays at external calls = 0 during normal work.
@@ -177,30 +181,37 @@ Optional OCR: `pip install paddlepaddle paddleocr`. If present, scans get a dete
 ```
   run_python(code)
         |
-        +-->[1] docker run … network=none     strongest
+        +-->[1] docker run --network none …   strongest: container, no NIC
         |
-        +-->[2] unshare -rn …                 no root needed
+        +-->[2] bubblewrap (bwrap) …          rootless, restricted mounts, no net
         |
-        +-->[3] subprocess + timeout          labelled NOT network-isolated
+        +-->[x] neither available             explicit error, nothing executes
 ```
 
-Tier 3 is never sold as air-gap. The string in the result is the proof.
+There is no host-interpreter fallback. If no isolation tier exists, `run_python`
+refuses to run and says so — the string in the result names the actual tier.
 
-## Measured outcomes (target workstation)
+## Expected outcomes (scripted demo checks)
 
-**Hardware:** RTX 4060 Ti 16 GB · Ollama local  
-**Stack preference now:** `qwen3:8b` + `qwen3-vl:8b` (or `4b`). If those tags are not pulled yet, router substitution keeps the same tools green.
+**Hardware:** GPU workstation (16 GB class) · Ollama local  
+**Models:** `qwen3:8b` + `qwen3-vl:8b` (or `4b`) preferred; legacy `qwen2.5` tags substitute automatically.
+
+These rows are the demo's acceptance checks, not a benchmark. Rows marked
+*(verified)* were run end-to-end on this build with live models on a 16 GB GPU
+workstation (19-Sep-2026); rows marked *(historical)* were observed on a
+previous build and are re-verified on each deployment.
 
 | Task | Outcome |
 | :--- | :--- |
-| Sandbox: count `ERROR` in `log_sample.txt` | **3** lines · isolation prefix shown |
-| KB: vibration alert limit for pump P-201 | **4.5 mm/s RMS** · SOP-MECH-041 |
-| `spares.xlsx` + 18% GST → approval Word file | **Rs 62304** · downloadable `.docx` |
-| `scanned_report.png` | seal **14 drops/min** (limit 10) · bearing **74.8 C** |
-| `inspection_report.pdf` (text + scanned pages) | both layers recovered |
-| `pid_crude_transfer.png` | tags P-201, limits, line design data |
-| `handwritten_shift_note.png` | shift time, actions, signer |
-| Egress probe | **ALL OUTBOUND ATTEMPTS DENIED** |
+| Sandbox: count `ERROR` in `log_sample.txt` | **3** lines · `[sandbox: bubblewrap, network=none]` *(verified)* |
+| KB: vibration alert limit for pump P-201 | **4.5 mm/s RMS** · SOP-MECH-041 *(verified)* |
+| `spares.xlsx` + 18% GST → approval Word file | **Rs 62304** · verified `.docx` on disk *(verified)* |
+| `pid_crude_transfer.png` | tags VI/TI/PI on P-201 + 4.5 mm/s RMS *(verified)* |
+| Outbound socket inside sandbox | `Errno 101` — connection blocked for real *(verified)* |
+| `scanned_report.png` | seal **14 drops/min** (limit 10) · bearing **74.8 C** *(historical)* |
+| `inspection_report.pdf` (text + scanned pages) | both layers recovered *(historical)* |
+| `handwritten_shift_note.png` | shift time, actions, signer *(historical)* |
+| Egress probe | every row reports its real state; **DENIED** only when the probe actually ran and failed to connect *(verified)* |
 
 ## Run in three steps
 
@@ -223,23 +234,28 @@ ollama pull nomic-embed-text
 Offline suite (no GPU required):
 
 ```bash
-python tests/test_offline.py
+python tests/test_offline.py                    # 87 checks: routing, scopes, artifacts, uploads, audit, sandbox
+.venv/bin/python -m pytest tests/test_browser.py # 18 checks: real-browser streaming, cancel, downloads, probes
 ```
+
+The offline suite is fully mocked — it verifies control flow, not model quality.
+Real-model verification happens on the deployment runtime, per run.
 
 ## Repository map
 
 ```
 SIH26117/
 ├── backend/
-│   ├── main.py            API: chat, stream, upload, egress, audit
-│   ├── agent.py           plan → act → observe
-│   ├── router.py          task classify + model resolve
-│   ├── tools.py           13 local tools
+│   ├── main.py            API: chat, stream, cancel, upload, egress, audit
+│   ├── agent.py           plan → act → observe, scope-wrapped tool calls
+│   ├── router.py          task classify + capability-aware model resolve
+│   ├── tools.py           15 local tools + per-request file scopes
+│   ├── sandbox.py         docker / bubblewrap execution, no host fallback
 │   ├── calc.py            safe AST math
-│   ├── audit.py           every call + destination
-│   ├── ollama_client.py   127.0.0.1 only
+│   ├── audit.py           metadata-only audit log (sizes + digests)
+│   ├── ollama_client.py   127.0.0.1 only, think-tag stripping
 │   └── models.yaml        registry (edit here to add models)
-├── frontend/index.html    UI + SSE trace + probe
+├── frontend/index.html    UI + SSE trace + probe + cancel
 ├── corpus/                synthetic SOPs / correspondence
 ├── workspace/             demo PDF, P&ID, scan, log, xlsx
 ├── outputs/               generated deliverables
@@ -247,15 +263,19 @@ SIH26117/
 ├── docs/
 │   ├── DEMO_SCRIPT.md     judge run order
 │   └── ARCHITECTURE.md    design decisions
-└── tests/test_offline.py  routing, sandbox labels, parser shapes
+└── tests/
+    ├── test_offline.py    routing, scopes, artifacts, uploads, audit, sandbox
+    └── test_browser.py    real-browser UI: stream, cancel, downloads, probes
 ```
 
 Sample workspace files are **synthetic**, written for the PS rule of open/sample data only. No proprietary MRPL documents are in this repo.
 
 ## What we refuse to overclaim
 
-- We prove **process / sandbox / probe** isolation. We do not claim a formal air-gap certification.
-- Machine-wide egress scope counts every process on the host. Use a dedicated demo laptop for that mode.
+- We show **process / sandbox / probe** evidence. We do not claim a formal air-gap certification, and the audit log covers instrumented application calls only — not every process or native library on the host.
+- Machine-wide egress scope counts every process on the host. Use a dedicated demo machine for that mode.
+- File access is enforced in code per request (a task scope resolves which workspace files the agent may touch); the system prompt is not the access boundary.
+- A "task succeeded" response requires the deliverable to verify on disk — right format, inside `outputs/`, within size limits. A failed generation cannot be talked into a success.
 - Small local models can emit messy JSON; the parser retries known shapes. That is why the offline tests exist.
 - This nomination POC is the harness. Plant DCS/SCADA connectors, SSO, and K8s are out of scope for the sheet deadline.
 

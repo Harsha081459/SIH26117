@@ -31,9 +31,19 @@ class CalcError(Exception):
     pass
 
 
+def _checked(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise CalcError("only real numeric values are supported")
+    if isinstance(value, int) and value.bit_length() > 1024:
+        raise CalcError("integer size limit exceeded")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise CalcError("result must be finite")
+    return value
+
+
 def _fmt(v):
     if isinstance(v, float):
-        return f"{v:.6g}"
+        return f"{v:.12g}"
     return str(v)
 
 
@@ -41,9 +51,7 @@ def _walk(node, steps):
     if isinstance(node, ast.Expression):
         return _walk(node.body, steps)
     if isinstance(node, ast.Constant):
-        if not isinstance(node.value, (int, float)):
-            raise CalcError("only numeric constants allowed")
-        return node.value
+        return _checked(node.value)
     if isinstance(node, ast.Name):
         if node.id in _FUNCS and not callable(_FUNCS[node.id]):
             return _FUNCS[node.id]
@@ -57,18 +65,25 @@ def _walk(node, steps):
             raise CalcError("unsupported operator")
         sym, fn = _BINOPS[op]
         left, right = _walk(node.left, steps), _walk(node.right, steps)
+        if op is ast.Pow and (abs(right) > 1000 or (isinstance(left, int) and right > 0
+                                                    and left.bit_length() * right > 1024)):
+            raise CalcError("exponent exceeds the calculation limit")
         try:
-            val = fn(left, right)
-        except ZeroDivisionError:
-            raise CalcError("division by zero")
+            val = _checked(fn(left, right))
+        except (ArithmeticError, ValueError) as exc:
+            raise CalcError(str(exc)) from exc
         steps.append(f"{_fmt(left)} {sym} {_fmt(right)} = {_fmt(val)}")
         return val
     if isinstance(node, ast.Call):
-        if not isinstance(node.func, ast.Name) or node.func.id not in _FUNCS:
-            raise CalcError("only whitelisted functions allowed")
+        if (not isinstance(node.func, ast.Name) or not callable(_FUNCS.get(node.func.id))
+                or node.keywords or len(node.args) > 16):
+            raise CalcError("use a whitelisted function with positional numeric arguments")
         name = node.func.id
         args = [_walk(a, steps) for a in node.args]
-        val = _FUNCS[name](*args)
+        try:
+            val = _checked(_FUNCS[name](*args))
+        except (ArithmeticError, ValueError, TypeError) as exc:
+            raise CalcError(str(exc)) from exc
         steps.append(f"{name}({', '.join(_fmt(a) for a in args)}) = {_fmt(val)}")
         return val
     raise CalcError(f"unsupported expression element: {type(node).__name__}")
@@ -76,13 +91,17 @@ def _walk(node, steps):
 
 def evaluate(expression, label=""):
     """Return (result, steps). Raises CalcError on anything unsafe."""
+    if not isinstance(expression, str) or not expression.strip() or len(expression) > 4096:
+        raise CalcError("expression must contain 1 to 4096 characters")
     try:
         tree = ast.parse(expression, mode="eval")
-    except SyntaxError as e:
-        raise CalcError(f"could not parse expression: {e}")
-    steps = []
-    result = _walk(tree, steps)
-    return result, steps
+        if sum(1 for _ in ast.walk(tree)) > 256:
+            raise CalcError("expression is too complex")
+        steps = []
+        result = _checked(_walk(tree, steps))
+        return result, steps
+    except (SyntaxError, RecursionError) as exc:
+        raise CalcError("invalid or overly nested expression") from exc
 
 
 def evaluate_text(expression, label=""):

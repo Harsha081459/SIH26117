@@ -33,9 +33,9 @@ automatically. Say: *adding a new open-weight model is one block in
 > "Compute the total value of spares.xlsx including 18% GST and draft a short
 > approval note as a Word file"
 
-Watch the trace panel fill in live. On the verified run this was
+Watch the trace panel fill in live. On a previous verified run this was
 `fs_list` → `sheet_read` → `run_python` → `make_docx` (5 steps, 6.7 s), ending
-with a download button for a real `.docx`. Open the file — the total is
+with a download button for a real `.docx`. Open the file — the expected total is
 Rs 62,304.
 
 The exact step sequence varies between runs because the model chooses it; what is
@@ -47,14 +47,16 @@ value from its AST evaluator.
 
 Task 1's coding request already ran in the sandbox. The result is prefixed with
 the isolation level that actually applied — `[sandbox: docker, network=none]`, or
-`[sandbox: netns via unshare, network=none]` where Docker is absent.
+`[sandbox: bwrap, network=none]` where Docker is absent. If neither exists the
+tool refuses to run and says so; generated code never falls back to the host.
 
 Optional, and the strongest moment of the demo:
 
 > "Write Python that opens a socket to google.com and run it"
 
 It fails inside the sandbox. The failure is the point — generated code cannot
-reach the network. Verified output on the target machine:
+reach the network. Output observed on an earlier run (unshare tier; the current
+build uses Docker or bubblewrap instead):
 
 ```
 [sandbox: netns via unshare, network=none] blocked: [Errno 101] Network is unreachable
@@ -105,11 +107,13 @@ Three independent pieces of evidence, and the third is the one that lands.
    DENIED  HTTPS 443  -> gaierror: Name or service not known
    DENIED  DNS 53     -> OSError: [Errno 101] Network is unreachable
    DENIED  urllib https://example.com -> URLError
-   ALL OUTBOUND ATTEMPTS DENIED - nothing can leave this machine
+   Both tested connections were blocked inside this sandbox.
    ```
 
-Say it plainly: *a counter sitting at zero only proves nothing happened to go
-out. This proves nothing can.*
+   If the sandbox or a probe does not complete, the UI says **inconclusive**,
+   not DENIED — a probe that never ran proves nothing. Say it plainly: *a
+   counter sitting at zero only proves nothing happened to go out. A completed,
+   denied probe shows the sandboxed code could not get out.*
 
 Closing line: *pull the network cable and nothing about this changes.*
 
@@ -126,16 +130,19 @@ calculator, `audit.py` for the log.
 
 **"What is your accuracy?"**
 It is a tool-using system, not a classifier, so the honest measure is whether
-tasks complete correctly. On the target 16 GB workstation with
-`qwen3:8b`: the counting task 2 steps / 1.2 s, the knowledge-base
-lookup 2 steps / 1.5 s, the spreadsheet-to-Word-file task 5 steps / 6.7 s with
-the correct total. Small models do sometimes emit malformed actions — the parser
+tasks complete correctly. Historical timings on a 16 GB GPU workstation with
+`qwen2.5` models (previous build; re-verified per deployment, not a standing
+benchmark): the counting task 2 steps / 1.2 s, the knowledge-base lookup
+2 steps / 1.5 s, the spreadsheet-to-Word-file task 5 steps / 6.7 s with the
+correct total. Small models do sometimes emit malformed actions — the parser
 accepts the shapes we observed in real runs, retries with corrective feedback,
 and a loop guard stops a stuck model repeating a call.
-`tests/test_offline.py` (15 checks) pins all of that.
+`tests/test_offline.py` (87 checks) pins the control flow;
+`tests/test_browser.py` (18 checks) pins the UI in a real browser.
 
 **"What breaks in the field?"**
 Bigger models need more VRAM than 16 GB. Handwriting OCR degrades on poor scans.
-Network isolation for generated code needs Docker or Linux user namespaces; where
-neither exists the sandbox says `NOT network-isolated` rather than pretending.
-A 3B model needs more retries than a 7B one to stay in the action format.
+Running generated code needs Docker or Linux bubblewrap; where neither exists
+`run_python` returns an explicit error instead of executing — there is no
+host fallback to sell as isolation. A 3B model needs more retries than a 7B
+one to stay in the action format.

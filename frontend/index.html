@@ -251,6 +251,17 @@
   #send:hover:not(:disabled) { filter:brightness(1.1); }
   #send:disabled { background:var(--line-2); color:var(--fg-mute); cursor:not-allowed; }
   .hint { text-align:center; font-size:11.5px; color:var(--fg-mute); margin-top:9px; }
+  #stop { border:1px solid var(--danger); border-radius:var(--radius-sm); padding:7px 10px;
+          background:var(--danger-dim); color:var(--fg); cursor:pointer; }
+  #stop:disabled { opacity:.55; cursor:wait; }
+  button:disabled { cursor:not-allowed; }
+  .status { margin:10px 0; font-size:12.5px; color:var(--fg-dim); }
+  .status.completed,.verdict.blocked { color:var(--ok); }
+  .status.failed,.verdict.reachable { color:var(--danger); }
+  .status.partial,.status.cancelled,.verdict.inconclusive { color:var(--warn); }
+  .prow.blocked { background:var(--ok-dim); color:var(--ok); }
+  .prow.reachable { background:var(--danger-dim); color:var(--danger); }
+  .prow.inconclusive { background:#3a2f12; color:#ffd98a; }
 
   ::-webkit-scrollbar { width:10px; height:10px; }
   ::-webkit-scrollbar-track { background:transparent; }
@@ -263,6 +274,15 @@
     aside.open { transform:none; }
     .icon-btn { display:grid; }
     .thread, .composer { max-width:none; }
+  }
+  @media (max-width:600px) {
+    header { height:96px; flex-wrap:wrap; gap:6px 12px; padding:8px 12px; align-content:center; }
+    .logo { flex:1 0 calc(100% - 60px); font-size:14px; }
+    .logo small,header .spacer { display:none; }
+    .pill { flex:1; justify-content:center; min-width:0; padding:4px 6px; font-size:11px; }
+    aside { top:96px; }
+    .thread { padding:16px 14px 8px; }
+    .composer-wrap { padding:10px 12px 14px; }
   }
 </style>
 </head>
@@ -302,12 +322,12 @@
     </section>
 
     <section>
-      <h3>Sovereignty proof</h3>
+      <h3>Sandbox network check</h3>
       <button class="card" id="probe">
-        <b>Run egress probe</b>Deliberately attempt to reach the internet
+        <b>Run sandbox probe</b>Test two connections from the code sandbox
       </button>
-      <div id="probebox" style="font-size:12.5px;color:var(--fg-mute);line-height:1.5">
-        A counter at zero shows nothing went out. This shows nothing can.
+      <div id="probebox" role="status" style="font-size:12.5px;color:var(--fg-mute);line-height:1.5">
+        Results apply only to the tested sandbox. A connection snapshot or application log does not certify isolation.
       </div>
     </section>
 
@@ -317,8 +337,14 @@
     </section>
 
     <section>
+      <h3>Installed models</h3>
+      <div id="modelsbox" style="font-size:12.5px;color:var(--fg-mute)">Checking local runtime…</div>
+    </section>
+
+    <section>
       <h3>Workspace</h3>
       <div id="wsbox" style="font-size:12.5px;color:var(--fg-mute)">—</div>
+      <div id="buildbox" role="status" style="font-size:11.5px;color:var(--fg-mute);margin-top:10px">Checking backend version…</div>
     </section>
   </aside>
 
@@ -326,11 +352,11 @@
     <div id="scroll">
       <div class="thread" id="thread">
         <div class="hero" id="hero">
-          <div class="badge"><span style="font-size:10px">&#9679;</span> Runs entirely on-premise</div>
+          <div class="badge"><span style="font-size:10px">&#9679;</span> Local-inference proof of concept</div>
           <h1>What needs doing?</h1>
-          <p>Reads scans, drawings and spreadsheets, runs code in an isolated
-             sandbox, searches internal SOPs, and produces real Word, Excel and
-             PowerPoint files. Nothing leaves this machine.</p>
+          <p>Work with attached documents, request Word, Excel or PowerPoint drafts,
+             and inspect each tool step. Code execution requires a supported sandbox.
+             Outputs need human review; network checks have limited scope.</p>
         </div>
       </div>
     </div>
@@ -339,13 +365,14 @@
       <div class="composer">
         <div class="attach-row" id="attachRow"></div>
         <div class="box" id="box">
-          <textarea id="msg" rows="1" placeholder="Describe a task, or drop a scan, drawing, PDF or spreadsheet here…"></textarea>
+          <textarea id="msg" rows="1" maxlength="8000" aria-label="Task" placeholder="Describe a task, or drop a document here…"></textarea>
           <button class="tool-btn" id="attachBtn" title="Attach a file">&#128206;</button>
+          <button id="stop" title="Stop the current request" hidden disabled>Stop</button>
           <button id="send" title="Send" disabled>&#10148;</button>
         </div>
-        <div class="hint">Enter to send &middot; Shift+Enter for a new line &middot; drag a file anywhere onto the box</div>
+        <div class="hint">Enter to send &middot; Shift+Enter for a new line &middot; one attachment, up to 20 MiB</div>
         <input id="file" type="file" hidden
-               accept="image/*,.pdf,.xlsx,.xlsm,.txt,.md,.csv,.log,.json,.yaml">
+               accept=".png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp,.pdf,.docx,.pptx,.xlsx,.xlsm,.txt,.md,.csv,.log,.json,.yaml,.yml,.ini,.py">
       </div>
     </div>
   </main>
@@ -357,15 +384,17 @@ const $ = s => document.querySelector(s);
 const thread = $('#thread'), scroll = $('#scroll'), inp = $('#msg'),
       sendBtn = $('#send'), fileInp = $('#file'), box = $('#box'),
       attachRow = $('#attachRow');
-let attachment = null, busy = false;
+let attachment = null, busy = false, uploading = false, active = null,
+    polling = false, compatible = false;
 
 const esc = s => String(s == null ? '' : s)
-  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 
 /* ── minimal markdown renderer (inline: no external library) ───────── */
 function md(src) {
   const blocks = [];
-  let s = String(src || '').replace(/\r\n/g, '\n');
+  let s = String(src || '').replace(/\u0000/g, '').replace(/\r\n/g, '\n');
 
   // fenced code first, stashed so nothing else touches it
   s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
@@ -415,7 +444,7 @@ function turn(kind, who, inner) {
   const el = document.createElement('div');
   el.className = 'turn ' + kind;
   el.innerHTML =
-    '<div class="av">' + (kind === 'user' ? 'You' : kind === 'err' ? '!' : 'AI') + '</div>' +
+    '<div class="av">' + (kind === 'user' ? 'You' : kind === 'err' ? '!' : 'SW') + '</div>' +
     '<div class="body"><div class="who"><b>' + esc(who) + '</b></div>' +
     '<div class="content">' + inner + '</div></div>';
   thread.appendChild(el);
@@ -423,87 +452,155 @@ function turn(kind, who, inner) {
   return el.querySelector('.content');
 }
 
-const EXT_OF = n => (n.split('.').pop() || 'file').toUpperCase();
+const EXT_OF = n => (String(n).split('.').pop() || 'file').toUpperCase();
 
 function stepEl(ev, live) {
   const d = document.createElement('details');
   d.className = 'step' + (live ? ' live' : '');
   const args = JSON.stringify(ev.args || {});
   d.innerHTML =
-    '<summary><span class="n">' + (ev.step ?? '·') + '</span>' +
+    '<summary><span class="n">' + esc(ev.step ?? '·') + '</span>' +
     '<span class="tname">' + esc(ev.tool) + '()</span>' +
+    (ev.ok === false ? '<span>failed</span>' : '') +
     '<span class="chev">&#10148;</span></summary>' +
     '<div class="inner"><div class="lbl">arguments</div><pre>' +
-    esc(args.length > 2 ? args : '{}') + '</pre>' +
-    '<div class="lbl" style="margin-top:9px">result</div><pre>' +
+    esc(args) + '</pre><div class="lbl" style="margin-top:9px">result</div><pre>' +
     esc(ev.result || '') + '</pre></div>';
   return d;
 }
 
 function metaTags(r, steps, secs) {
   const t = [];
-  t.push('<span class="tag">task <b>' + esc(r.task) + '</b></span>');
-  t.push('<span class="tag">model <b>' + esc(r.model) + '</b></span>');
+  if (r.task) t.push('<span class="tag">task <b>' + esc(r.task) + '</b></span>');
+  if (r.model) t.push('<span class="tag">model <b>' + esc(r.model) + '</b></span>');
   if (r.orchestrator && r.orchestrator !== r.model)
     t.push('<span class="tag">orchestrator <b>' + esc(r.orchestrator) + '</b></span>');
-  if (steps != null) t.push('<span class="tag t-ok">' + steps + ' steps</span>');
-  if (secs != null) t.push('<span class="tag t-ok">' + secs + 's</span>');
+  if (r.substitution) t.push('<span class="tag">' + esc(r.substitution) + '</span>');
+  if (r.orchestrator_substitution) t.push('<span class="tag">' + esc(r.orchestrator_substitution) + '</span>');
+  if (steps != null) t.push('<span class="tag">' + esc(steps) + ' steps</span>');
+  if (secs != null) t.push('<span class="tag">' + esc(secs) + 's</span>');
   return '<div class="meta">' + t.join('') + '</div>';
+}
+
+function errorDetail(data, fallback) {
+  const detail = data?.detail;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) return detail.map(x => x.msg || 'Invalid request').join('; ');
+  return fallback;
+}
+
+async function responseJSON(response) {
+  let data;
+  try { data = await response.json(); }
+  catch (_) { throw new Error('Backend returned an unreadable response (HTTP ' + response.status + ').'); }
+  if (!response.ok) throw new Error(errorDetail(data, 'HTTP ' + response.status));
+  if (!data || typeof data !== 'object') throw new Error('Invalid backend response.');
+  return data;
+}
+
+async function requestJSON(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try { return await responseJSON(await fetch(url, { ...options, signal: options.signal || controller.signal })); }
+  finally { clearTimeout(timer); }
+}
+
+function pill(selector, state, text) {
+  const el = $(selector);
+  el.className = 'pill ' + state;
+  el.lastElementChild.textContent = text;
 }
 
 /* ── status polling ────────────────────────────────────────────────── */
 async function poll() {
+  if (polling) return;
+  polling = true;
   try {
-    const e = await (await fetch('/api/egress')).json();
-    const p = $('#egress'), n = e.external_calls;
-    p.className = 'pill ' + (n === 0 ? 'ok' : 'bad');
-    p.lastElementChild.textContent = n === 0 ? 'egress 0' : 'egress ' + n;
-  } catch (_) {}
-  try {
-    const m = await (await fetch('/api/models')).json();
-    const p = $('#runtime');
-    p.className = 'pill ' + (m.runtime_up ? 'ok' : 'warn');
-    p.lastElementChild.textContent = m.runtime_up
-      ? m.runtime_models.length + ' models local' : 'runtime down';
-  } catch (_) {}
-  try {
-    const a = (await (await fetch('/api/audit?n=1')).json()).summary;
-    $('#auditbox').innerHTML =
-      '<div class="kv"><span>records</span><span>' + a.total_records + '</span></div>' +
-      Object.entries(a.destinations).map(([k, v]) =>
-        '<div class="kv"><span>' + esc(k) + '</span><span>' + v + '</span></div>').join('') +
-      '<div class="kv"><span>all local</span><span style="color:' +
-      (a.all_local ? 'var(--ok)' : 'var(--danger)') + '">' + a.all_local + '</span></div>';
-  } catch (_) {}
-  try {
-    const h = await (await fetch('/api/health')).json();
-    $('#wsbox').innerHTML = h.workspace_files.map(f =>
-      '<div class="kv"><span style="font-family:var(--mono);font-size:11.5px">' +
-      esc(f) + '</span><span></span></div>').join('');
-  } catch (_) {}
+    await Promise.all([
+      (async () => {
+        try {
+          const e = await requestJSON('/api/egress');
+          const known = e.status === 'snapshot' && Number.isInteger(e.external_calls);
+          pill('#egress', known ? (e.external_calls === 0 ? 'ok' : 'warn') : 'warn',
+               known ? e.external_calls + ' connections now' : 'connections unknown');
+          $('#egress').title = e.note || 'Instantaneous snapshot, not historical traffic evidence';
+        } catch (_) { pill('#egress', 'warn', 'connections unknown'); }
+      })(),
+      (async () => {
+        try {
+          const m = await requestJSON('/api/models');
+          const names = Array.isArray(m.runtime_models) ? m.runtime_models : [];
+          pill('#runtime', m.runtime_up && names.length ? 'ok' : 'warn',
+               m.runtime_up ? names.length + ' models installed' : 'runtime unavailable');
+          $('#modelsbox').textContent = m.runtime_up
+            ? (names.join(' · ') || 'Runtime reachable, but no models are installed.')
+            : (m.error || 'The local model runtime is unavailable.');
+        } catch (_) {
+          pill('#runtime', 'warn', 'runtime unknown');
+          $('#modelsbox').textContent = 'Could not read model status.';
+        }
+      })(),
+      (async () => {
+        try {
+          const a = (await requestJSON('/api/audit?n=1')).summary;
+          $('#auditbox').innerHTML =
+            '<div class="kv"><span>metadata records</span><span>' + esc(a.total_records) + '</span></div>' +
+            Object.entries(a.destinations || {}).map(([k, v]) =>
+              '<div class="kv"><span>' + esc(k) + '</span><span>' + esc(v) + '</span></div>').join('') +
+            '<div class="kv"><span>logged destinations</span><span>' +
+            (a.all_local === true ? 'local only' : a.all_local === false ? 'non-local present' : 'unknown') + '</span></div>' +
+            '<div class="hint">Instrumented calls only; not an isolation certificate.</div>';
+        } catch (_) { $('#auditbox').textContent = 'Audit metadata unavailable.'; }
+      })(),
+      (async () => {
+        try {
+          const h = await requestJSON('/api/health');
+          compatible = h.api_version === 2;
+          $('#wsbox').innerHTML = (h.workspace_files || []).map(f =>
+            '<div class="kv"><span>' + esc(f) + '</span></div>').join('');
+          $('#buildbox').textContent = compatible
+            ? 'Backend ' + h.version + (h.build_id ? ' · ' + h.build_id : '')
+            : 'Backend/UI version mismatch. Restart the revised backend before using this page.';
+        } catch (_) {
+          compatible = false;
+          $('#buildbox').textContent = 'Backend unavailable; version could not be checked.';
+        }
+        autoGrow();
+      })()
+    ]);
+  } finally { polling = false; }
 }
 poll(); setInterval(poll, 6000);
 
 /* ── attachments ───────────────────────────────────────────────────── */
 function renderChip() {
   attachRow.innerHTML = attachment
-    ? '<span class="chip">' + esc(attachment) +
+    ? '<span class="chip">' + esc(attachment.display_name || attachment.saved) +
       '<button title="Remove" onclick="clearAttach()">&times;</button></span>' : '';
+  if (attachRow.querySelector('button')) attachRow.querySelector('button').disabled = busy || uploading;
 }
-window.clearAttach = () => { attachment = null; renderChip(); };
+window.clearAttach = () => { if (!busy && !uploading) { attachment = null; renderChip(); } };
 
 async function upload(f) {
-  const fd = new FormData(); fd.append('file', f);
+  if (busy || uploading || !compatible) return;
+  uploading = true; autoGrow();
   try {
-    const r = await (await fetch('/api/upload', { method: 'POST', body: fd })).json();
-    attachment = r.saved; renderChip(); inp.focus();
-  } catch (e) { turn('err', 'Upload failed', '<div class="md"><p>' + esc(e) + '</p></div>'); }
+    if (!f.size || f.size > 20 * 1024 * 1024) throw new Error('Choose a nonempty file up to 20 MiB.');
+    const fd = new FormData(); fd.append('file', f);
+    const r = await requestJSON('/api/upload', { method: 'POST', body: fd });
+    if (typeof r.saved !== 'string' || !r.saved) throw new Error('Upload did not return a saved filename.');
+    attachment = { saved: r.saved, display_name: r.display_name || f.name };
+  } catch (e) {
+    turn('err', 'Upload failed', '<div class="md"><p>' + esc(e.message) + '</p></div>');
+  } finally {
+    uploading = false; renderChip(); autoGrow(); inp.focus();
+  }
 }
 
 $('#attachBtn').onclick = () => fileInp.click();
 fileInp.onchange = () => { if (fileInp.files[0]) upload(fileInp.files[0]); fileInp.value = ''; };
 ['dragenter', 'dragover'].forEach(ev =>
-  box.addEventListener(ev, e => { e.preventDefault(); box.classList.add('drag'); }));
+  box.addEventListener(ev, e => { e.preventDefault(); if (!busy) box.classList.add('drag'); }));
 ['dragleave', 'drop'].forEach(ev =>
   box.addEventListener(ev, e => { e.preventDefault(); box.classList.remove('drag'); }));
 box.addEventListener('drop', e => {
@@ -514,118 +611,209 @@ box.addEventListener('drop', e => {
 function autoGrow() {
   inp.style.height = 'auto';
   inp.style.height = Math.min(inp.scrollHeight, 184) + 'px';
-  sendBtn.disabled = busy || !inp.value.trim();
+  sendBtn.disabled = busy || uploading || !compatible || !inp.value.trim();
+  $('#attachBtn').disabled = busy || uploading || !compatible;
+  document.querySelectorAll('.card[data-q]').forEach(c => { c.disabled = busy || uploading || !compatible; });
+  $('#stop').hidden = !busy;
+  $('#stop').disabled = !busy || !active || active.stopRequested || active.final;
 }
 inp.addEventListener('input', autoGrow);
 inp.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
 });
 sendBtn.onclick = () => send();
 
 document.querySelectorAll('.card[data-q]').forEach(c => c.onclick = () => {
-  if (c.dataset.att) attachment = c.dataset.att, renderChip();
+  if (busy || uploading || !compatible) return;
+  attachment = c.dataset.att ? { saved: c.dataset.att, display_name: c.dataset.att } : null;
+  renderChip();
   inp.value = c.dataset.q; autoGrow(); send();
   $('#aside').classList.remove('open');
 });
 $('#menu').onclick = () => $('#aside').classList.toggle('open');
 
+async function readEventStream(body, onEvent, idleTimeout = 45000) {
+  if (!body) throw new Error('Streaming is not available in this response.');
+  const reader = body.getReader(), decoder = new TextDecoder();
+  let buffer = '';
+  function frame(text) {
+    const data = text.split(/\r?\n/).filter(line => line.startsWith('data:'))
+      .map(line => line.slice(5).replace(/^ /, '')).join('\n');
+    if (!data) return;
+    let event;
+    try { event = JSON.parse(data); }
+    catch (_) { throw new Error('The task stream contained a malformed event.'); }
+    if (!event || typeof event.type !== 'string') throw new Error('Invalid task event.');
+    onEvent(event);
+  }
+  try {
+    while (true) {
+      let timer;
+      const result = await Promise.race([
+        reader.read(),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('No stream activity; connection interrupted.')), idleTimeout); })
+      ]).finally(() => clearTimeout(timer));
+      buffer += result.done ? decoder.decode() : decoder.decode(result.value, { stream: true });
+      if (buffer.length > 2 * 1024 * 1024) throw new Error('Task event exceeded the client size limit.');
+      const parts = buffer.split(/\r?\n\r?\n/);
+      buffer = parts.pop();
+      for (const part of parts) frame(part);
+      if (result.done) {
+        if (buffer.trim() && !buffer.trim().startsWith(':')) throw new Error('Task stream ended inside an event.');
+        break;
+      }
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+
+async function cancelActive() {
+  const state = active;
+  if (!state || state.final) return;
+  state.stopRequested = true;
+  state.progress('Stop requested; waiting for the current local operation to finish.');
+  autoGrow();
+  if (!state.id || state.cancelSent) return;
+  state.cancelSent = true;
+  try {
+    const result = await requestJSON('/api/chat/' + encodeURIComponent(state.id) + '/cancel', { method: 'POST' });
+    if (active === state && !state.final && result.status === 'finished')
+      state.progress('The backend has finished; waiting for the final result.');
+  } catch (error) {
+    if (active === state && !state.final) {
+      state.stopRequested = false; state.cancelSent = false;
+      state.progress('Stop could not be confirmed: ' + error.message + ' You can retry Stop.');
+      autoGrow();
+    }
+  }
+}
+$('#stop').onclick = () => cancelActive();
+
 /* ── send ──────────────────────────────────────────────────────────── */
 async function send() {
   const text = inp.value.trim();
-  if (!text || busy) return;
-  busy = true; sendBtn.disabled = true;
-  inp.value = ''; autoGrow();
-
+  if (!text || busy || uploading || !compatible) return;
+  const sentAttach = attachment, started = Date.now();
+  busy = true; attachment = null;
+  inp.value = ''; renderChip();
   turn('user', 'You', '<div class="md">' + md(text) + '</div>' +
-    (attachment ? '<div class="files"><span class="file"><span class="ext">' +
-      esc(EXT_OF(attachment)) + '</span>' + esc(attachment) + '</span></div>' : ''));
-
+    (sentAttach ? '<div class="files"><span class="file">' + esc(sentAttach.display_name || sentAttach.saved) + '</span></div>' : ''));
   const content = turn('bot', 'Workbench',
-    '<div class="think"><span class="bars"><i></i><i></i><i></i></span>' +
-    '<span class="lbl2">thinking…</span></div>');
-  const stepsBox = document.createElement('div');
-  stepsBox.className = 'steps';
-
-  const sentAttach = attachment;
-  attachment = null; renderChip();
-  const t0 = Date.now();
-  let route = null, count = 0;
-
-  try {
-    const resp = await fetch('/api/chat/stream', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, attachment: sentAttach })
-    });
-    const reader = resp.body.getReader(), dec = new TextDecoder();
-    let buf = '';
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const parts = buf.split('\n\n'); buf = parts.pop();
-
-      for (const part of parts) {
-        const line = part.replace(/^data: /, '').trim();
-        if (!line) continue;
-        let ev; try { ev = JSON.parse(line); } catch (_) { continue; }
-
-        if (ev.type === 'route') {
-          route = ev;
-          content.innerHTML = metaTags(ev) +
-            '<div class="think"><span class="bars"><i></i><i></i><i></i></span>' +
-            '<span class="lbl2">planning…</span></div>';
-          content.insertBefore(stepsBox, content.querySelector('.think'));
-        } else if (ev.type === 'step') {
-          count++;
-          stepsBox.querySelectorAll('.step.live').forEach(s => s.classList.remove('live'));
-          stepsBox.appendChild(stepEl(ev, true));
-          const l = content.querySelector('.lbl2');
-          if (l) l.textContent = 'ran ' + ev.tool + '()…';
-          scroll.scrollTop = scroll.scrollHeight;
-        } else if (ev.type === 'final') {
-          stepsBox.querySelectorAll('.step.live').forEach(s => s.classList.remove('live'));
-          const secs = ev.secs != null ? ev.secs : ((Date.now() - t0) / 1000).toFixed(1);
-          const files = (ev.files || []).map(f =>
-            '<a class="file" href="/api/download/' + encodeURIComponent(f) + '">' +
-            '<span class="ext">' + esc(EXT_OF(f)) + '</span>' + esc(f) +
-            '<span class="dl">download</span></a>').join('');
-          content.innerHTML = metaTags(route || {}, ev.steps ?? count, secs);
-          content.appendChild(stepsBox);
-          const b = document.createElement('div');
-          b.className = 'md';
-          b.innerHTML = md(ev.answer);
-          content.appendChild(b);
-          if (files) {
-            const fw = document.createElement('div');
-            fw.className = 'files'; fw.innerHTML = files;
-            content.appendChild(fw);
-          }
-        }
+    '<div class="route"></div><div class="steps"></div>' +
+    '<div class="think" role="status"><span class="bars"><i></i><i></i><i></i></span><span class="lbl2">Starting…</span></div>');
+  const stepsBox = content.querySelector('.steps'), routeBox = content.querySelector('.route');
+  const stepKeys = new Set();
+  let route = {}, count = 0;
+  const state = { id: null, final: false, stopRequested: false, cancelSent: false,
+    controller: new AbortController(),
+    progress(message) { const label = content.querySelector('.lbl2'); if (label) label.textContent = message; }
+  };
+  active = state; autoGrow();
+  const addStep = ev => {
+    const key = ev.step + '/' + ev.tool;
+    if (stepKeys.has(key)) return;
+    stepKeys.add(key); count++;
+    stepsBox.querySelectorAll('.step.live').forEach(s => s.classList.remove('live'));
+    stepsBox.appendChild(stepEl(ev, !state.final));
+  };
+  const notice = (message, kind) => {
+    const el = document.createElement('div');
+    el.className = 'status ' + kind; el.setAttribute('role', 'status'); el.textContent = message;
+    content.appendChild(el);
+  };
+  function final(ev) {
+    if (state.final) throw new Error('The backend sent more than one final result.');
+    if (!['completed', 'partial', 'failed', 'cancelled'].includes(ev.status)) throw new Error('Unknown task completion state.');
+    state.final = true;
+    for (const entry of ev.trace || []) if (entry.type === 'tool') addStep(entry);
+    stepsBox.querySelectorAll('.step.live').forEach(s => s.classList.remove('live'));
+    content.querySelector('.think')?.remove();
+    routeBox.innerHTML = metaTags(route, ev.steps ?? count, ev.secs ?? ((Date.now() - started) / 1000).toFixed(1));
+    notice({ completed: 'Completed', partial: 'Partially completed', failed: 'Failed', cancelled: 'Cancelled' }[ev.status], ev.status);
+    const answer = document.createElement('div'); answer.className = 'md'; answer.innerHTML = md(ev.answer);
+    content.appendChild(answer);
+    const files = new Set(Array.isArray(ev.files) ? ev.files : []);
+    const artifacts = Array.isArray(ev.artifacts) ? ev.artifacts : [];
+    const verified = artifacts.filter(a => a && typeof a.name === 'string' && files.has(a.name)
+      && !/[\\/:]/.test(a.name) && Number.isInteger(a.bytes) && a.bytes > 0 && /^[a-f0-9]{64}$/.test(a.sha256));
+    if (verified.length) {
+      const downloads = document.createElement('div'); downloads.className = 'files';
+      for (const item of verified) {
+        const link = document.createElement('a'); link.className = 'file';
+        link.href = '/api/download/' + encodeURIComponent(item.name); link.download = item.name;
+        link.innerHTML = '<span class="ext">' + esc(EXT_OF(item.name)) + '</span>' + esc(item.name) +
+          '<span class="dl">' + Math.ceil(item.bytes / 1024) + ' KiB · download</span>';
+        downloads.appendChild(link);
       }
+      content.appendChild(downloads);
     }
-  } catch (err) {
-    content.innerHTML = '<div class="md"><p>Request failed: ' + esc(err) + '</p></div>';
-    content.closest('.turn').className = 'turn err';
+    if (ev.grounding) notice(ev.grounding === 'source_based_draft'
+      ? 'Source-based draft; factual fidelity needs review.' : 'General knowledge; no source documents used.', '');
+    autoGrow();
   }
-  busy = false; autoGrow(); inp.focus(); poll();
-  scroll.scrollTop = scroll.scrollHeight;
+  try {
+    const response = await fetch('/api/chat/stream', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: state.controller.signal,
+      body: JSON.stringify({ message: text, attachment: sentAttach?.saved || null })
+    });
+    if (!response.ok) await responseJSON(response);
+    if (!response.headers.get('content-type')?.includes('text/event-stream')) throw new Error('The backend did not return a task stream.');
+    await readEventStream(response.body, ev => {
+      if (ev.type === 'start') {
+        if (typeof ev.request_id !== 'string') throw new Error('Missing request identifier.');
+        state.id = ev.request_id;
+        if (state.stopRequested) cancelActive();
+      } else if (ev.type === 'progress') {
+        if (!state.stopRequested) state.progress(ev.message || 'Working…');
+      } else if (ev.type === 'route') {
+        route = ev; routeBox.innerHTML = metaTags(ev);
+        if (!state.stopRequested) state.progress('Planning the next action…');
+      } else if (ev.type === 'step') {
+        addStep(ev);
+        if (!state.stopRequested) state.progress('Finished ' + ev.tool + '()…');
+      } else if (ev.type === 'final') {
+        final(ev);
+      } else if (ev.type === 'done' && !state.final) {
+        throw new Error('The backend finished without a final result.');
+      }
+      scroll.scrollTop = scroll.scrollHeight;
+    });
+    if (!state.final) throw new Error('The stream ended without a final result. Completion is unconfirmed.');
+  } catch (error) {
+    content.querySelector('.think')?.remove();
+    stepsBox.querySelectorAll('.step.live').forEach(s => s.classList.remove('live'));
+    notice((state.final ? 'Final result retained; transport error: ' : 'Request interrupted; partial steps retained: ') + error.message,
+           state.final ? 'partial' : 'failed');
+    if (!state.final && state.id)
+      requestJSON('/api/chat/' + encodeURIComponent(state.id) + '/cancel', { method: 'POST' }).catch(() => {});
+    if (!state.id && !inp.value) { inp.value = text; attachment = sentAttach; renderChip(); }
+  } finally {
+    state.controller.abort();
+    if (active === state) active = null;
+    busy = false; autoGrow(); inp.focus(); poll();
+    scroll.scrollTop = scroll.scrollHeight;
+  }
 }
 
 /* ── egress probe ──────────────────────────────────────────────────── */
 $('#probe').onclick = async () => {
   const btn = $('#probe'), out = $('#probebox');
   btn.disabled = true;
-  out.innerHTML = '<div class="think" style="font-size:12.5px">' +
-    '<span class="bars"><i></i><i></i><i></i></span>attempting…</div>';
+  out.innerHTML = '<div class="think" style="font-size:12.5px">Running the sandbox probe…</div>';
   try {
-    const r = await (await fetch('/api/egress/probe', { method: 'POST' })).json();
-    out.innerHTML = r.rows.map(x =>
-      '<div class="prow ' + (x.state === 'DENIED' ? 'deny' : 'allow') + '">' +
-      x.state + ' &middot; ' + esc(x.detail) + '</div>').join('') +
-      '<div class="verdict ' + (r.denied ? 'good' : 'bad') + '">' + esc(r.verdict) + '</div>';
-  } catch (e) { out.textContent = 'probe failed: ' + e; }
-  btn.disabled = false; poll();
+    const r = await requestJSON('/api/egress/probe', { method: 'POST' });
+    const state = ['blocked', 'reachable', 'inconclusive'].includes(r.status) ? r.status : 'inconclusive';
+    out.innerHTML = (Array.isArray(r.rows) ? r.rows : []).map(x => {
+      const rowState = ['blocked', 'reachable', 'inconclusive'].includes(x.state) ? x.state : 'inconclusive';
+      return '<div class="prow ' + rowState + '">' + esc(rowState) + ' · ' + esc(x.target) + ' · ' + esc(x.detail || '') + '</div>';
+    }).join('') + '<div class="verdict ' + state + '">' + esc(state.toUpperCase()) + ': ' +
+      esc(r.verdict || 'The probe did not return a usable verdict.') + '</div>' +
+      '<div class="hint">' + esc(r.limitation || 'Only the tested sandbox is covered; this does not certify whole-machine isolation.') + '</div>';
+  } catch (error) {
+    out.innerHTML = '<div class="verdict inconclusive">INCONCLUSIVE: ' + esc(error.message) + '</div>';
+  } finally { btn.disabled = false; poll(); }
 };
 </script>
 </body>
